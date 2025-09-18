@@ -16,7 +16,13 @@ import io
 import base64
 import logging
 from typing import Optional, Dict, List, Tuple
-import openai
+# Import opcional de OpenAI (solo para transcripción de audio)
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    openai = None
+    OPENAI_AVAILABLE = False
 from groq import Groq
 import requests
 from telegram import Update, Message
@@ -87,9 +93,11 @@ class TelegramToWordPressBot:
                 self.groq_client = Groq(api_key=self.GROQ_API_KEY)
                 logger.info("✅ Cliente Groq inicializado")
             
-            if self.OPENAI_API_KEY:
+            if self.OPENAI_API_KEY and OPENAI_AVAILABLE:
                 self.openai_client = openai.OpenAI(api_key=self.OPENAI_API_KEY)
                 logger.info("✅ Cliente OpenAI inicializado")
+            elif self.OPENAI_API_KEY and not OPENAI_AVAILABLE:
+                logger.warning("⚠️  API Key de OpenAI configurada pero librería no instalada. Transcripción de audio deshabilitada.")
             
             if all([self.WORDPRESS_URL, self.WORDPRESS_USERNAME, self.WORDPRESS_PASSWORD]):
                 self.wp_client = Client(
@@ -290,529 +298,420 @@ Si hay problemas, contacta al administrador del sistema.
             )
             
             # Procesar imagen
-            processed_image = await self._process_image(content_data.get('image_data'))
+            image_data = await self._process_image(content_data['image_data'])
+            if not image_data:
+                await processing_msg.edit_text("❌ Error al procesar imagen.")
+                self.stats['errors'] += 1
+                return
             
             # Actualizar estado
             await processing_msg.edit_text(
                 "📝 **Procesando tu crónica...**\n"
-                "📤 Publicando en WordPress...",
+                "📰 Publicando en WordPress...",
                 parse_mode='Markdown'
             )
             
             # Publicar en WordPress
-            post_result = await self._publish_to_wordpress(article_data, processed_image)
+            result = await self._publish_to_wordpress(article_data, image_data)
             
-            if post_result:
-                # Actualizar estadísticas
-                self.stats['articles_created'] += 1
-                
-                # Mensaje de éxito
+            if result['success']:
                 success_message = f"""
 ✅ **¡Artículo creado exitosamente!**
 
-📰 **Título:** {article_data['title'][:50]}{'...' if len(article_data['title']) > 50 else ''}
-🔗 **Estado:** {post_result['status'].title()}
+📰 **Título:** {article_data['title']}
+🔗 **URL:** {result['url']}
 📊 **Palabras:** {len(article_data['content'].split())}
-👤 **Periodista:** {username}
-🕐 **Hora:** {datetime.now().strftime('%H:%M')}
+⭐ **Estado:** Borrador (para revisión)
 
-{'📝 El artículo está en borradores para revisión.' if post_result['status'] == 'draft' else '🚀 Artículo publicado directamente.'}
+El artículo está listo para su revisión y publicación.
                 """
                 await processing_msg.edit_text(success_message, parse_mode='Markdown')
+                self.stats['articles_created'] += 1
                 
-                logger.info(f"Artículo creado exitosamente por {username} (ID: {user_id})")
+                # Log para administración
+                logger.info(f"✅ Artículo creado por {username} (ID: {user_id}): {article_data['title']}")
                 
             else:
-                await processing_msg.edit_text("❌ Error al publicar en WordPress.")
+                await processing_msg.edit_text(f"❌ Error al publicar: {result['error']}")
                 self.stats['errors'] += 1
                 
         except Exception as e:
             logger.error(f"Error procesando mensaje: {e}")
             self.stats['errors'] += 1
-            await message.reply_text("❌ Error interno del sistema. Intenta nuevamente.")
+            try:
+                await message.reply_text("❌ Error interno del sistema. Intenta nuevamente.")
+            except:
+                pass
     
     def _is_valid_journalist_message(self, message: Message) -> bool:
-        """Valida formato del mensaje de periodista"""
-        has_photo = bool(message.photo)
-        has_text = bool(message.caption or message.text)
-        has_audio = bool(message.voice or message.audio)
+        """Verifica si el mensaje tiene formato válido para procesamiento periodístico"""
+        has_image = bool(message.photo)
+        has_text = bool(message.caption and message.caption.strip())
+        has_voice = bool(message.voice and self.openai_client)
         
-        return has_photo and (has_text or has_audio)
+        # Debe tener imagen y al menos texto o voz
+        return has_image and (has_text or has_voice)
     
     async def _extract_content_from_message(self, message: Message) -> Optional[Dict]:
-        """Extrae y procesa contenido del mensaje"""
+        """Extrae y procesa el contenido del mensaje de Telegram"""
         try:
-            content = {}
+            # Obtener imagen
+            if not message.photo:
+                return None
+            
+            photo = message.photo[-1]  # La imagen de mayor resolución
+            photo_file = await photo.get_file()
+            
+            # Descargar imagen
+            async with aiohttp.ClientSession() as session:
+                async with session.get(photo_file.file_path) as response:
+                    if response.status == 200:
+                        image_data = await response.read()
+                    else:
+                        return None
             
             # Extraer texto
-            if message.caption:
-                content['text'] = message.caption.strip()
-            elif message.text:
-                content['text'] = message.text.strip()
-            else:
-                content['text'] = ''
+            text_content = message.caption if message.caption else ""
             
             # Procesar audio si existe
+            voice_transcript = ""
             if message.voice and self.openai_client:
                 try:
-                    audio_text = await self._transcribe_audio(message.voice)
-                    if audio_text:
-                        content['text'] += f"\n\nTranscripción de audio: {audio_text}"
-                        logger.info("Audio transcrito exitosamente")
+                    voice_transcript = await self._transcribe_voice_message(message.voice)
+                    if voice_transcript:
+                        logger.info("✅ Audio transcrito exitosamente")
                 except Exception as e:
                     logger.warning(f"Error transcribiendo audio: {e}")
             
-            # Extraer imagen (mayor resolución disponible)
-            if message.photo:
-                photo = message.photo[-1]
-                file = await message.bot.get_file(photo.file_id)
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(file.file_path) as response:
-                        if response.status == 200:
-                            content['image_data'] = await response.read()
-                            content['image_format'] = 'JPEG'
-                        else:
-                            logger.error(f"Error descargando imagen: HTTP {response.status}")
-                            return None
-            
-            # Metadatos
-            content.update({
-                'timestamp': datetime.now().isoformat(),
-                'user_id': message.from_user.id,
-                'username': message.from_user.username or message.from_user.first_name,
-                'chat_id': message.chat_id,
-                'message_id': message.message_id
-            })
-            
-            # Validar contenido mínimo
-            if len(content.get('text', '')) < 10:
-                logger.warning("Texto muy corto para generar artículo")
-                return None
-            
-            return content
+            return {
+                'image_data': image_data,
+                'text_content': text_content,
+                'voice_transcript': voice_transcript,
+                'user_info': {
+                    'id': message.from_user.id,
+                    'username': message.from_user.username or message.from_user.first_name,
+                    'timestamp': datetime.now()
+                }
+            }
             
         except Exception as e:
             logger.error(f"Error extrayendo contenido: {e}")
             return None
     
-    async def _transcribe_audio(self, voice) -> Optional[str]:
+    async def _transcribe_voice_message(self, voice_message) -> Optional[str]:
         """Transcribe audio usando Whisper de OpenAI"""
         try:
             if not self.openai_client:
                 return None
             
-            # Obtener archivo de audio
-            file = await voice.get_file()
+            # Descargar archivo de voz
+            voice_file = await voice_message.get_file()
             
-            # Descargar audio
             async with aiohttp.ClientSession() as session:
-                async with session.get(file.file_path) as response:
-                    audio_data = await response.read()
+                async with session.get(voice_file.file_path) as response:
+                    if response.status == 200:
+                        voice_data = await response.read()
+                    else:
+                        return None
             
-            # Crear archivo temporal
-            temp_audio_path = f"/tmp/voice_{datetime.now().timestamp()}.ogg"
-            async with aiofiles.open(temp_audio_path, 'wb') as f:
-                await f.write(audio_data)
+            # Crear archivo temporal en memoria
+            voice_file_obj = io.BytesIO(voice_data)
+            voice_file_obj.name = "voice_message.ogg"
             
-            # Transcribir con Whisper
-            with open(temp_audio_path, 'rb') as audio_file:
-                transcript = self.openai_client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=audio_file,
-                    language="es"  # Español por defecto
-                )
+            # Transcribir con OpenAI Whisper
+            transcript = self.openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=voice_file_obj,
+                language="es"  # Español por defecto
+            )
             
-            # Limpiar archivo temporal
-            os.remove(temp_audio_path)
-            
-            return transcript.text
+            return transcript.text if transcript.text else None
             
         except Exception as e:
             logger.error(f"Error transcribiendo audio: {e}")
             return None
     
     async def _generate_article_with_ai(self, content_data: Dict) -> Optional[Dict]:
-        """Genera artículo periodístico usando Groq"""
+        """Genera artículo periodístico usando IA"""
         try:
             if not self.groq_client:
-                logger.error("Cliente Groq no disponible")
                 return None
             
-            prompt = self._create_enhanced_prompt(content_data)
+            # Combinar todo el contenido disponible
+            combined_content = []
             
-            completion = self.groq_client.chat.completions.create(
-                model="llama3-70b-8192",
+            if content_data['text_content']:
+                combined_content.append(f"Descripción: {content_data['text_content']}")
+            
+            if content_data['voice_transcript']:
+                combined_content.append(f"Transcripción de audio: {content_data['voice_transcript']}")
+            
+            source_content = "\n".join(combined_content)
+            
+            if not source_content.strip():
+                return None
+            
+            # Prompt mejorado para generación de artículo
+            prompt = f"""
+Eres un periodista profesional especializado en crear artículos informativos de alta calidad.
+
+CONTENIDO FUENTE:
+{source_content}
+
+INSTRUCCIONES:
+1. Crea un artículo periodístico completo de mínimo 500 palabras
+2. Usa un estilo informativo, claro y profesional
+3. Estructura con titular, subtítulos y párrafos bien organizados
+4. Incluye contexto relevante cuando sea posible
+5. Mantén objetividad periodística
+6. Optimiza para SEO con palabras clave naturales
+
+FORMATO REQUERIDO:
+- Título principal (H1)
+- 3-4 subtítulos (H2) 
+- Párrafos de 2-3 oraciones
+- Conclusión que cierre el tema
+- Meta descripción (150 caracteres max)
+
+RESPONDE EN FORMATO JSON:
+{{
+    "title": "Título principal del artículo",
+    "meta_description": "Descripción para SEO (máx 150 caracteres)",
+    "content": "Contenido completo del artículo en HTML con etiquetas H2, H3, p, etc.",
+    "tags": ["tag1", "tag2", "tag3"],
+    "category": "Categoría principal"
+}}
+            """
+            
+            # Llamada a Groq
+            response = self.groq_client.chat.completions.create(
                 messages=[
-                    {
-                        "role": "system",
-                        "content": """Eres un periodista senior especializado en noticias de último momento. 
-                        Creas artículos SEO-optimizados siguiendo estándares profesionales.
-                        
-                        ESPECIFICACIONES TÉCNICAS:
-                        - Mínimo 500 palabras
-                        - Título H1 atractivo y SEO-friendly
-                        - Estructura clara con H2 y H3
-                        - Meta descripción 150-160 caracteres
-                        - 4 tags relevantes
-                        - Alt text descriptivo para imagen
-                        
-                        ESTILO PERIODÍSTICO:
-                        - Pirámide invertida (más importante primero)
-                        - Párrafos cortos y claros
-                        - Lenguaje objetivo y profesional
-                        - Datos específicos cuando estén disponibles
-                        
-                        RESPONDE ÚNICAMENTE EN JSON con esta estructura exacta:
-                        {
-                            "title": "Título principal del artículo",
-                            "meta_description": "Meta descripción SEO de 150-160 caracteres",
-                            "keywords": "palabra, clave, principal",
-                            "tags": ["tag1", "tag2", "tag3", "tag4"],
-                            "content": "Contenido HTML completo con <h2>, <h3>, <p>, etc.",
-                            "excerpt": "Resumen ejecutivo de 2-3 líneas",
-                            "alt_text": "Descripción de la imagen para alt text",
-                            "category": "Categoría sugerida para WordPress"
-                        }"""
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
+                    {"role": "system", "content": "Eres un periodista profesional experto en crear artículos informativos de calidad."},
+                    {"role": "user", "content": prompt}
                 ],
+                model="llama-3.1-70b-versatile",
                 temperature=0.7,
-                max_tokens=2500
+                max_tokens=2048
             )
             
-            # Parsear y validar JSON
-            response_text = completion.choices[0].message.content.strip()
+            # Procesar respuesta
+            ai_response = response.choices[0].message.content
             
-            # Limpiar respuesta si hay texto extra
-            if response_text.startswith('```json'):
-                response_text = response_text[7:]
-            if response_text.endswith('```'):
-                response_text = response_text[:-3]
-            
-            article_data = json.loads(response_text)
-            
-            # Validaciones
-            word_count = len(article_data['content'].split())
-            if word_count < 500:
-                logger.warning(f"Artículo con solo {word_count} palabras")
-            
-            # Validar estructura JSON
-            required_fields = ['title', 'meta_description', 'keywords', 'tags', 'content', 'excerpt', 'alt_text']
-            missing_fields = [field for field in required_fields if field not in article_data]
-            if missing_fields:
-                logger.error(f"Campos faltantes en respuesta de IA: {missing_fields}")
+            # Intentar parsear JSON
+            try:
+                article_data = json.loads(ai_response)
+                
+                # Validar campos requeridos
+                required_fields = ['title', 'content', 'meta_description']
+                if all(field in article_data for field in required_fields):
+                    return article_data
+                else:
+                    logger.error("Respuesta de IA incompleta")
+                    return None
+                    
+            except json.JSONDecodeError:
+                logger.error("Error parsing JSON de respuesta IA")
                 return None
             
-            logger.info(f"Artículo generado: {word_count} palabras")
-            return article_data
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"Error decodificando JSON de IA: {e}")
-            logger.error(f"Respuesta recibida: {response_text[:200]}...")
-            return None
         except Exception as e:
-            logger.error(f"Error generando artículo: {e}")
+            logger.error(f"Error generando artículo con IA: {e}")
             return None
     
-    def _create_enhanced_prompt(self, content_data: Dict) -> str:
-        """Crea prompt mejorado para la IA"""
-        text = content_data.get('text', '')
-        username = content_data.get('username', 'Periodista')
-        timestamp = content_data.get('timestamp', '')
-        
-        # Detectar tipo de noticia basado en palabras clave
-        news_type = self._detect_news_type(text)
-        
-        prompt = f"""
-CRÓNICA RECIBIDA:
-📰 Periodista: {username}
-🕐 Fecha/Hora: {timestamp}
-📝 Tipo detectado: {news_type}
-
-CONTENIDO ORIGINAL:
-{text}
-
-INSTRUCCIONES ESPECÍFICAS:
-1. Crear artículo de "último momento" expandiendo la información
-2. Mantener los hechos originales como base
-3. Agregar contexto periodístico relevante
-4. Usar estructura de pirámide invertida
-5. Incluir elementos SEO optimizados
-6. Longitud: 500-800 palabras óptimas
-7. Tono: Profesional e informativo
-
-CONTEXTO ADICIONAL:
-- La imagen adjunta documenta la situación descrita
-- Priorizar inmediatez y relevancia noticiosa
-- Incluir llamadas a la acción cuando sea apropiado
-
-FORMATO DE SALIDA:
-JSON válido con todos los campos requeridos.
-        """
-        
-        return prompt
-    
-    def _detect_news_type(self, text: str) -> str:
-        """Detecta tipo de noticia basado en palabras clave"""
-        text_lower = text.lower()
-        
-        if any(word in text_lower for word in ['accidente', 'choque', 'atropello', 'colisión']):
-            return "Accidente de tránsito"
-        elif any(word in text_lower for word in ['manifestación', 'protesta', 'marcha', 'concentración']):
-            return "Manifestación/Protesta"
-        elif any(word in text_lower for word in ['incendio', 'fuego', 'bomberos', 'humo']):
-            return "Emergencia/Incendio"
-        elif any(word in text_lower for word in ['política', 'alcalde', 'concejo', 'municipio']):
-            return "Política local"
-        elif any(word in text_lower for word in ['deporte', 'fútbol', 'partido', 'campeonato']):
-            return "Deportes"
-        else:
-            return "Noticia general"
-    
-    async def _process_image(self, image_data: Optional[bytes]) -> Optional[bytes]:
-        """Procesa imagen con optimizaciones avanzadas"""
+    async def _process_image(self, image_data: bytes) -> Optional[Dict]:
+        """Procesa y optimiza la imagen"""
         try:
-            if not image_data:
-                return None
-            
+            # Abrir imagen con PIL
             image = Image.open(io.BytesIO(image_data))
             
-            # Información original
-            original_size = len(image_data)
-            original_dimensions = image.size
+            # Convertir a RGB si es necesario
+            if image.mode in ('RGBA', 'P'):
+                image = image.convert('RGB')
             
-            # Convertir a RGB
-            if image.mode in ('RGBA', 'LA', 'P'):
-                background = Image.new('RGB', image.size, (255, 255, 255))
-                background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
-                image = background
-            
-            # Redimensionar manteniendo proporción
+            # Redimensionar manteniendo aspecto
             image.thumbnail((self.TARGET_WIDTH, self.TARGET_HEIGHT), Image.Resampling.LANCZOS)
             
-            # Crear imagen final con dimensiones exactas
-            final_image = Image.new('RGB', (self.TARGET_WIDTH, self.TARGET_HEIGHT), (255, 255, 255))
+            # Si es más pequeña que el target, crear nueva con el tamaño exacto
+            if image.size != (self.TARGET_WIDTH, self.TARGET_HEIGHT):
+                new_image = Image.new('RGB', (self.TARGET_WIDTH, self.TARGET_HEIGHT), (255, 255, 255))
+                
+                # Centrar la imagen
+                x = (self.TARGET_WIDTH - image.width) // 2
+                y = (self.TARGET_HEIGHT - image.height) // 2
+                new_image.paste(image, (x, y))
+                image = new_image
             
-            # Centrar imagen
-            x = (self.TARGET_WIDTH - image.width) // 2
-            y = (self.TARGET_HEIGHT - image.height) // 2
-            final_image.paste(image, (x, y))
-            
-            # Comprimir con calidad optimizada
+            # Guardar imagen optimizada
             output_buffer = io.BytesIO()
-            final_image.save(
-                output_buffer,
-                format='JPEG',
-                quality=self.IMAGE_QUALITY,
-                optimize=True,
-                progressive=True
-            )
+            image.save(output_buffer, format='JPEG', quality=self.IMAGE_QUALITY, optimize=True)
+            processed_image_data = output_buffer.getvalue()
             
-            processed_data = output_buffer.getvalue()
-            processed_size = len(processed_data)
-            compression_ratio = (1 - processed_size / original_size) * 100
-            
-            logger.info(f"Imagen procesada: {original_dimensions} -> {final_image.size}, "
-                       f"Tamaño: {original_size//1024}KB -> {processed_size//1024}KB "
-                       f"({compression_ratio:.1f}% compresión)")
-            
-            return processed_data
+            return {
+                'data': processed_image_data,
+                'format': 'JPEG',
+                'size': len(processed_image_data),
+                'dimensions': (self.TARGET_WIDTH, self.TARGET_HEIGHT)
+            }
             
         except Exception as e:
             logger.error(f"Error procesando imagen: {e}")
             return None
     
-    async def _publish_to_wordpress(self, article_data: Dict, image_data: Optional[bytes]) -> Optional[Dict]:
-        """Publica artículo en WordPress con manejo robusto de errores"""
+    async def _publish_to_wordpress(self, article_data: Dict, image_data: Dict) -> Dict:
+        """Publica el artículo en WordPress"""
         try:
             if not self.wp_client:
-                logger.error("Cliente WordPress no disponible")
-                return None
+                return {'success': False, 'error': 'Cliente WordPress no disponible'}
+            
+            # Subir imagen primero
+            image_filename = f"article_image_{int(datetime.now().timestamp())}.jpg"
+            
+            # Preparar datos de imagen para WordPress
+            image_bits = xmlrpc_client.Binary(image_data['data'])
+            image_struct = {
+                'name': image_filename,
+                'type': 'image/jpeg',
+                'bits': image_bits,
+                'overwrite': True
+            }
             
             # Subir imagen
-            featured_image_id = None
-            if image_data:
-                featured_image_id = await self._upload_image_to_wordpress(
-                    image_data,
-                    article_data.get('alt_text', 'Imagen de noticia')
-                )
-                if featured_image_id:
-                    logger.info(f"Imagen subida con ID: {featured_image_id}")
+            try:
+                uploaded_image = self.wp_client.call(media.UploadFile(image_struct))
+                featured_image_id = uploaded_image['id']
+                logger.info(f"✅ Imagen subida a WordPress: {uploaded_image['url']}")
+            except Exception as e:
+                logger.error(f"Error subiendo imagen: {e}")
+                featured_image_id = None
             
             # Crear post
             post = wordpress_xmlrpc.WordPressPost()
             post.title = article_data['title']
             post.content = article_data['content']
-            post.excerpt = article_data.get('excerpt', '')
-            post.post_status = 'draft'  # Cambiar a 'publish' para publicar directamente
+            post.post_status = 'draft'  # Publicar como borrador
+            post.excerpt = article_data.get('meta_description', '')
             
-            # SEO y metadatos
-            post.custom_fields = [
-                {'key': '_yoast_wpseo_metadesc', 'value': article_data.get('meta_description', '')},
-                {'key': '_yoast_wpseo_focuskw', 'value': article_data.get('keywords', '')},
-                {'key': 'periodista_autor', 'value': article_data.get('author', 'Sistema automático')},
-                {'key': 'fecha_cronica', 'value': datetime.now().isoformat()}
-            ]
-            
-            # Tags y categorías
-            if 'tags' in article_data and article_data['tags']:
-                post.terms_names = {
-                    'post_tag': article_data['tags']
-                }
-            
-            # Categoría si está especificada
-            if 'category' in article_data and article_data['category']:
-                if 'terms_names' not in post.__dict__:
-                    post.terms_names = {}
-                post.terms_names['category'] = [article_data['category']]
-            
-            # Imagen destacada
+            # Asignar imagen destacada si se subió correctamente
             if featured_image_id:
                 post.thumbnail = featured_image_id
+            
+            # Asignar categorías y tags si están disponibles
+            if 'category' in article_data and article_data['category']:
+                post.terms_names = {
+                    'category': [article_data['category']]
+                }
+            
+            if 'tags' in article_data and article_data['tags']:
+                post.terms_names = post.terms_names or {}
+                post.terms_names['post_tag'] = article_data['tags']
             
             # Publicar post
             post_id = self.wp_client.call(posts.NewPost(post))
             
-            logger.info(f"Post creado con ID: {post_id}")
+            # Obtener URL del post
+            published_post = self.wp_client.call(posts.GetPost(post_id))
+            post_url = published_post.link
+            
+            logger.info(f"✅ Artículo publicado en WordPress: {post_url}")
             
             return {
+                'success': True,
                 'post_id': post_id,
-                'status': 'draft',
-                'title': article_data['title'],
-                'url': f"{self.WORDPRESS_URL.replace('/xmlrpc.php', '')}/?p={post_id}"
+                'url': post_url,
+                'featured_image_id': featured_image_id
             }
             
         except Exception as e:
             logger.error(f"Error publicando en WordPress: {e}")
-            return None
-    
-    async def _upload_image_to_wordpress(self, image_data: bytes, alt_text: str) -> Optional[int]:
-        """Sube imagen a WordPress con retry logic"""
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                filename = f'noticia_{datetime.now().strftime("%Y%m%d_%H%M%S")}_{attempt}.jpg'
-                
-                data = {
-                    'name': filename,
-                    'type': 'image/jpeg',
-                    'bits': xmlrpc_client.Binary(image_data)
-                }
-                
-                response = self.wp_client.call(media.UploadFile(data))
-                
-                if response and 'id' in response:
-                    media_id = response['id']
-                    
-                    # Actualizar alt text
-                    try:
-                        media_item = self.wp_client.call(media.GetMediaItem(media_id))
-                        media_item.description = alt_text
-                        self.wp_client.call(media.EditMediaItem(media_id, media_item))
-                    except Exception as e:
-                        logger.warning(f"No se pudo actualizar alt text: {e}")
-                    
-                    return media_id
-                
-            except Exception as e:
-                logger.warning(f"Intento {attempt + 1} falló: {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)  # Backoff exponencial
-        
-        logger.error("Falló la subida de imagen después de todos los intentos")
-        return None
-    
-    def run(self):
-        """Inicia el bot con configuración robusta"""
-        if not self.TELEGRAM_TOKEN:
-            logger.error("❌ Token de Telegram no configurado")
-            return
-        
-        if not self.groq_client:
-            logger.error("❌ Cliente Groq no inicializado")
-            return
-        
-        if not self.wp_client:
-            logger.error("❌ Cliente WordPress no inicializado")
-            return
-        
-        # Crear directorio de logs si no existe
-        os.makedirs('logs', exist_ok=True)
-        
-        try:
-            # Configurar aplicación
-            application = Application.builder().token(self.TELEGRAM_TOKEN).build()
-            
-            # Comandos
-            application.add_handler(CommandHandler("start", self.start_command))
-            application.add_handler(CommandHandler("help", self.help_command))
-            application.add_handler(CommandHandler("stats", self.stats_command))
-            
-            # Manejador de mensajes con contenido multimedia
-            application.add_handler(
-                MessageHandler(
-                    filters.PHOTO | filters.VOICE | filters.AUDIO,
-                    self.process_telegram_message
-                )
-            )
-            
-            logger.info("🚀 Bot iniciado exitosamente")
-            logger.info("📡 Esperando mensajes de periodistas...")
-            
-            # Ejecutar bot
-            application.run_polling(drop_pending_updates=True)
-            
-        except Exception as e:
-            logger.error(f"❌ Error crítico al iniciar bot: {e}")
+            return {'success': False, 'error': str(e)}
 
-
-if __name__ == "__main__":
-    try:
-        bot = TelegramToWordPressBot()
-        bot.run()
-    except KeyboardInterrupt:
-        logger.info("🛑 Bot detenido por el usuario")
-    except Exception as e:
-        logger.error(f"💥 Error fatal: {e}")
-
-# Health check endpoint para Render
-from flask import Flask
-import threading
-import os
-
-# Solo agregar Flask si no existe ya
-if 'app' not in locals():
-    flask_app = Flask(__name__)
-    
-    @flask_app.route('/')
-    @flask_app.route('/health')
-    def health_check():
-        return "Bot de automatización periodística funcionando ✅", 200
-    
-    @flask_app.route('/status')
-    def status():
-        return {
-            "status": "running",
-            "service": "telegram-wordpress-bot",
-            "version": "1.0.0"
-        }
-    
-    def run_flask():
-        port = int(os.environ.get('PORT', 10000))
-        flask_app.run(host='0.0.0.0', port=port, debug=False)
-    
-    # Iniciar Flask en hilo separado
-    if __name__ == "__main__":
-        # Iniciar bot en hilo principal
-        bot = TelegramToWordPressBot()
+    async def start_health_monitor(self):
+        """Servidor simple para health checks en Render"""
+        from flask import Flask
+        import threading
         
-        # Iniciar Flask en hilo separado para health checks
+        app = Flask(__name__)
+        
+        @app.route('/')
+        def health_check():
+            return {
+                'status': 'healthy',
+                'service': 'telegram-wordpress-bot',
+                'uptime_seconds': (datetime.now() - self.stats['start_time']).total_seconds(),
+                'stats': self.stats
+            }
+        
+        @app.route('/stats')
+        def get_stats():
+            return self.stats
+        
+        def run_flask():
+            app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)), debug=False)
+        
+        # Ejecutar Flask en hilo separado
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
         
-        # Ejecutar bot
-        bot.run()
+        logger.info(f"✅ Servidor de health check iniciado en puerto {os.getenv('PORT', 8080)}")
+
+async def main():
+    """Función principal del bot"""
+    try:
+        # Inicializar bot
+        bot = TelegramToWordPressBot()
+        
+        # Verificar configuración crítica
+        if not bot.TELEGRAM_TOKEN:
+            logger.error("❌ TELEGRAM_BOT_TOKEN no configurado")
+            return
+        
+        if not bot.groq_client:
+            logger.error("❌ GROQ_API_KEY no configurado")
+            return
+        
+        if not bot.wp_client:
+            logger.error("❌ Configuración de WordPress incompleta")
+            return
+        
+        # Iniciar health monitor para Render
+        await bot.start_health_monitor()
+        
+        # Configurar aplicación de Telegram
+        application = Application.builder().token(bot.TELEGRAM_TOKEN).build()
+        
+        # Registrar handlers
+        application.add_handler(CommandHandler("start", bot.start_command))
+        application.add_handler(CommandHandler("help", bot.help_command))
+        application.add_handler(CommandHandler("stats", bot.stats_command))
+        application.add_handler(MessageHandler(
+            filters.PHOTO | filters.VOICE, 
+            bot.process_telegram_message
+        ))
+        
+        logger.info("🚀 Bot iniciado correctamente")
+        logger.info(f"📊 Configuración activa:")
+        logger.info(f"  - Groq AI: {'✅' if bot.groq_client else '❌'}")
+        logger.info(f"  - OpenAI: {'✅' if bot.openai_client else '❌'}")
+        logger.info(f"  - WordPress: {'✅' if bot.wp_client else '❌'}")
+        logger.info(f"  - Usuarios autorizados: {len(bot.AUTHORIZED_USERS) if bot.AUTHORIZED_USERS else 'Todos'}")
+        
+        # Iniciar polling
+        await application.run_polling(
+            poll_interval=1.0,
+            timeout=10,
+            bootstrap_retries=5,
+            read_timeout=20,
+            write_timeout=20,
+            connect_timeout=20,
+            pool_timeout=20
+        )
+        
+    except Exception as e:
+        logger.error(f"Error fatal: {e}")
+        raise
+
+if __name__ == "__main__":
+    # Crear directorio de logs si no existe
+    os.makedirs('logs', exist_ok=True)
+    
+    # Ejecutar bot
+    asyncio.run(main())
