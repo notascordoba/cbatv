@@ -445,7 +445,7 @@ El artículo está listo para su revisión y publicación.
             return None
     
     async def _generate_article_with_ai(self, content_data: Dict) -> Optional[Dict]:
-        """Genera artículo periodístico usando IA"""
+        """Genera artículo periodístico usando IA con manejo robusto de respuestas"""
         try:
             if not self.groq_client:
                 return None
@@ -464,71 +464,106 @@ El artículo está listo para su revisión y publicación.
             if not source_content.strip():
                 return None
             
-            # Prompt mejorado para generación de artículo
+            # Prompt simplificado para asegurar respuesta JSON válida
             prompt = f"""
-Eres un periodista profesional especializado en crear artículos informativos de alta calidad.
+Crea un artículo periodístico basado en: {source_content}
 
-CONTENIDO FUENTE:
-{source_content}
-
-INSTRUCCIONES:
-1. Crea un artículo periodístico completo de mínimo 500 palabras
-2. Usa un estilo informativo, claro y profesional
-3. Estructura con titular, subtítulos y párrafos bien organizados
-4. Incluye contexto relevante cuando sea posible
-5. Mantén objetividad periodística
-6. Optimiza para SEO con palabras clave naturales
-
-FORMATO REQUERIDO:
-- Título principal (H1)
-- 3-4 subtítulos (H2) 
-- Párrafos de 2-3 oraciones
-- Conclusión que cierre el tema
-- Meta descripción (150 caracteres max)
-
-RESPONDE EN FORMATO JSON:
+RESPONDE SOLO EN FORMATO JSON VÁLIDO:
 {{
-    "title": "Título principal del artículo",
-    "meta_description": "Descripción para SEO (máx 150 caracteres)",
-    "content": "Contenido completo del artículo en HTML con etiquetas H2, H3, p, etc.",
+    "title": "Título del artículo",
+    "content": "Contenido completo del artículo con HTML básico",
+    "meta_description": "Descripción breve del artículo",
     "tags": ["tag1", "tag2", "tag3"],
-    "category": "Categoría principal"
+    "category": "Noticias"
 }}
+
+IMPORTANTE: Responde SOLO con el JSON, sin texto adicional.
             """
             
-            # Llamada a Groq con modelo actualizado
+            # Llamada a Groq
             response = self.groq_client.chat.completions.create(
                 messages=[
-                    {"role": "system", "content": "Eres un periodista profesional experto en crear artículos informativos de calidad."},
+                    {"role": "system", "content": "Eres un periodista que responde SOLO en formato JSON válido. No agregues texto antes o después del JSON."},
                     {"role": "user", "content": prompt}
                 ],
-                model="llama-3.1-8b-instant",  # Modelo actualizado que está disponible
-                temperature=0.7,
-                max_tokens=2048
+                model="llama-3.1-8b-instant",
+                temperature=0.3,  # Menos creatividad para más consistencia
+                max_tokens=1500
             )
             
             # Procesar respuesta
-            ai_response = response.choices[0].message.content
+            ai_response = response.choices[0].message.content.strip()
+            logger.info(f"Respuesta de IA recibida (primeros 100 chars): {ai_response[:100]}...")
+            
+            # Limpiar respuesta para extraer JSON
+            json_start = ai_response.find('{')
+            json_end = ai_response.rfind('}') + 1
+            
+            if json_start != -1 and json_end > json_start:
+                json_content = ai_response[json_start:json_end]
+                logger.info("JSON extraído de la respuesta")
+            else:
+                json_content = ai_response
             
             # Intentar parsear JSON
             try:
-                article_data = json.loads(ai_response)
+                article_data = json.loads(json_content)
+                logger.info("✅ JSON parseado exitosamente")
                 
                 # Validar campos requeridos
-                required_fields = ['title', 'content', 'meta_description']
-                if all(field in article_data for field in required_fields):
-                    return article_data
-                else:
-                    logger.error("Respuesta de IA incompleta")
-                    return None
+                required_fields = ['title', 'content']
+                missing_fields = [field for field in required_fields if field not in article_data or not article_data[field]]
+                
+                if missing_fields:
+                    logger.error(f"Campos faltantes en respuesta IA: {missing_fields}")
+                    # Crear fallback
+                    return self._create_fallback_article(source_content)
+                
+                # Asegurar que todos los campos existan
+                article_data.setdefault('meta_description', article_data['title'][:150])
+                article_data.setdefault('tags', ['noticia', 'general'])
+                article_data.setdefault('category', 'Noticias')
+                
+                return article_data
                     
-            except json.JSONDecodeError:
-                logger.error("Error parsing JSON de respuesta IA")
-                return None
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing JSON: {e}")
+                logger.error(f"Contenido que causó error: {json_content[:200]}...")
+                # Crear artículo fallback
+                return self._create_fallback_article(source_content)
             
         except Exception as e:
             logger.error(f"Error generando artículo con IA: {e}")
             return None
+    
+    def _create_fallback_article(self, source_content: str) -> Dict:
+        """Crea un artículo básico cuando falla la IA"""
+        logger.info("Creando artículo fallback")
+        
+        # Extraer palabras clave del contenido
+        words = source_content.lower().split()
+        key_words = [w for w in words if len(w) > 4][:3]
+        
+        title = f"Reporte: {' '.join(key_words).title()}" if key_words else "Nuevo Reporte Periodístico"
+        
+        content = f"""
+<h2>Reporte Periodístico</h2>
+<p>{source_content}</p>
+
+<h2>Detalles del Evento</h2>
+<p>Este reporte se basa en la información proporcionada y será ampliado con más detalles una vez que se obtenga información adicional.</p>
+
+<h2>Contexto</h2>
+<p>El evento reportado forma parte de la cobertura periodística continua de eventos locales y nacionales relevantes para la comunidad.</p>
+        """
+        
+        return {
+            'title': title,
+            'content': content,
+            'meta_description': f"Reporte sobre {title[:100]}",
+            'tags': key_words[:3] if key_words else ['noticia', 'reporte'],
+            'category': 'Noticias'
+        }
     
     async def _process_image(self, image_data: bytes) -> Optional[Dict]:
         """Procesa y optimiza la imagen"""
