@@ -496,13 +496,13 @@ RESPONDE EN FORMATO JSON:
 }}
             """
             
-            # Llamada a Groq
+            # Llamada a Groq con modelo actualizado
             response = self.groq_client.chat.completions.create(
                 messages=[
                     {"role": "system", "content": "Eres un periodista profesional experto en crear artículos informativos de calidad."},
                     {"role": "user", "content": prompt}
                 ],
-                model="llama-3.1-70b-versatile",
+                model="llama-3.1-8b-instant",  # Modelo actualizado que está disponible
                 temperature=0.7,
                 max_tokens=2048
             )
