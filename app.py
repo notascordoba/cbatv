@@ -33,7 +33,7 @@ except ImportError:
     
 from groq import Groq
 import requests
-from telegram import Update, Message
+from telegram import Update, Message, Bot
 from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler
 import wordpress_xmlrpc
 from wordpress_xmlrpc import Client
@@ -42,7 +42,7 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 from dotenv import load_dotenv
 import time
 from functools import wraps
-from flask import Flask
+from flask import Flask, request, jsonify
 import threading
 
 # Cargar variables de entorno
@@ -83,6 +83,7 @@ class TelegramToWordPressBot:
         self.groq_client = None
         self.openai_client = None
         self.wp_client = None
+        self.bot = None
         
         # Estadísticas simples
         self.stats = {
@@ -107,6 +108,10 @@ class TelegramToWordPressBot:
                 logger.info("✅ Cliente OpenAI inicializado")
             elif self.OPENAI_API_KEY and not OPENAI_AVAILABLE:
                 logger.warning("⚠️  API Key de OpenAI configurada pero librería no instalada. Transcripción de audio deshabilitada.")
+            
+            if self.TELEGRAM_TOKEN:
+                self.bot = Bot(token=self.TELEGRAM_TOKEN)
+                logger.info("✅ Cliente Telegram inicializado")
             
             if all([self.WORDPRESS_URL, self.WORDPRESS_USERNAME, self.WORDPRESS_PASSWORD]):
                 self.wp_client = Client(
@@ -245,9 +250,8 @@ Si hay problemas, contacta al administrador del sistema.
             return True  # Si no hay lista, todos están autorizados
         return user_id in self.AUTHORIZED_USERS
     
-    @rate_limit(max_calls=10, period=60)
-    async def process_telegram_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Procesa mensajes entrantes de Telegram con rate limiting"""
+    async def process_telegram_message(self, update: Update):
+        """Procesa mensajes entrantes de Telegram"""
         try:
             message = update.message
             user_id = message.from_user.id
@@ -633,93 +637,133 @@ RESPONDE EN FORMATO JSON:
             logger.error(f"Error publicando en WordPress: {e}")
             return {'success': False, 'error': str(e)}
 
-    async def start_health_monitor(self):
-        """Servidor simple para health checks en Render"""
-        app = Flask(__name__)
-        
-        @app.route('/')
-        def health_check():
+# Instancia global del bot
+bot_instance = None
+
+def create_flask_app():
+    """Crea y configura la aplicación Flask"""
+    app = Flask(__name__)
+    
+    @app.route('/')
+    def health_check():
+        global bot_instance
+        if bot_instance:
             return {
                 'status': 'healthy',
                 'service': 'telegram-wordpress-bot',
-                'uptime_seconds': (datetime.now() - self.stats['start_time']).total_seconds(),
-                'stats': self.stats
+                'uptime_seconds': (datetime.now() - bot_instance.stats['start_time']).total_seconds(),
+                'stats': bot_instance.stats
             }
-        
-        @app.route('/webhook', methods=['POST'])
-        def webhook():
-            """Endpoint para webhook de Telegram"""
-            return {'status': 'webhook_received'}
+        return {'status': 'starting'}
+    
+    @app.route('/webhook', methods=['POST'])
+    def webhook():
+        """Endpoint para webhook de Telegram"""
+        global bot_instance
+        try:
+            if not bot_instance or not bot_instance.bot:
+                logger.error("Bot no inicializado")
+                return jsonify({'error': 'Bot not initialized'}), 500
             
-        @app.route('/stats')
-        def get_stats():
-            return self.stats
-        
-        def run_flask():
-            app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)), debug=False)
-        
-        # Ejecutar Flask en hilo separado
-        flask_thread = threading.Thread(target=run_flask, daemon=True)
-        flask_thread.start()
-        
-        logger.info(f"✅ Servidor de health check iniciado en puerto {os.getenv('PORT', 8080)}")
+            # Obtener datos del webhook
+            update_data = request.get_json()
+            
+            if not update_data:
+                logger.warning("Webhook recibido sin datos")
+                return jsonify({'status': 'no_data'}), 400
+            
+            # Crear objeto Update de Telegram
+            update = Update.de_json(update_data, bot_instance.bot)
+            
+            # Procesar en background sin bloquear la respuesta
+            if update.message:
+                logger.info(f"Mensaje recibido de {update.message.from_user.first_name}")
+                
+                # Ejecutar procesamiento asíncrono
+                def run_async_processing():
+                    try:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        
+                        # Determinar tipo de procesamiento
+                        message = update.message
+                        if message.text and message.text.startswith('/'):
+                            # Es un comando
+                            if message.text == '/start':
+                                loop.run_until_complete(bot_instance.start_command(update, None))
+                            elif message.text == '/help':
+                                loop.run_until_complete(bot_instance.help_command(update, None))
+                            elif message.text == '/stats':
+                                loop.run_until_complete(bot_instance.stats_command(update, None))
+                        else:
+                            # Es un mensaje regular
+                            loop.run_until_complete(bot_instance.process_telegram_message(update))
+                        
+                        loop.close()
+                    except Exception as e:
+                        logger.error(f"Error procesando mensaje: {e}")
+                
+                # Ejecutar en hilo separado
+                thread = threading.Thread(target=run_async_processing)
+                thread.daemon = True
+                thread.start()
+                
+            return jsonify({'status': 'ok'}), 200
+            
+        except Exception as e:
+            logger.error(f"Error en webhook: {e}")
+            return jsonify({'error': str(e)}), 500
+    
+    @app.route('/stats')
+    def get_stats():
+        global bot_instance
+        if bot_instance:
+            return jsonify(bot_instance.stats)
+        return jsonify({'error': 'Bot not initialized'})
+    
+    return app
 
-async def main():
+def main():
     """Función principal del bot"""
+    global bot_instance
+    
     try:
         # Inicializar bot
-        bot = TelegramToWordPressBot()
+        bot_instance = TelegramToWordPressBot()
         
         # Verificar configuración crítica
-        if not bot.TELEGRAM_TOKEN:
+        if not bot_instance.TELEGRAM_TOKEN:
             logger.error("❌ TELEGRAM_BOT_TOKEN no configurado")
             return
         
-        if not bot.groq_client:
+        if not bot_instance.groq_client:
             logger.error("❌ GROQ_API_KEY no configurado")
             return
         
-        if not bot.wp_client:
+        if not bot_instance.wp_client:
             logger.error("❌ Configuración de WordPress incompleta")
             return
         
-        # Iniciar health monitor para Render
-        await bot.start_health_monitor()
-        
-        # Configurar aplicación de Telegram
-        application = Application.builder().token(bot.TELEGRAM_TOKEN).build()
-        
-        # Registrar handlers
-        application.add_handler(CommandHandler("start", bot.start_command))
-        application.add_handler(CommandHandler("help", bot.help_command))
-        application.add_handler(CommandHandler("stats", bot.stats_command))
-        application.add_handler(MessageHandler(
-            filters.PHOTO | filters.VOICE, 
-            bot.process_telegram_message
-        ))
-        
-        logger.info("🚀 Bot iniciado correctamente")
+        logger.info("🚀 Bot inicializado correctamente")
         logger.info(f"📊 Configuración activa:")
-        logger.info(f"  - Groq AI: {'✅' if bot.groq_client else '❌'}")
-        logger.info(f"  - OpenAI: {'✅' if bot.openai_client else '❌'}")
-        logger.info(f"  - WordPress: {'✅' if bot.wp_client else '❌'}")
-        logger.info(f"  - Usuarios autorizados: {len(bot.AUTHORIZED_USERS) if bot.AUTHORIZED_USERS else 'Todos'}")
+        logger.info(f"  - Groq AI: {'✅' if bot_instance.groq_client else '❌'}")
+        logger.info(f"  - OpenAI: {'✅' if bot_instance.openai_client else '❌'}")
+        logger.info(f"  - WordPress: {'✅' if bot_instance.wp_client else '❌'}")
+        logger.info(f"  - Usuarios autorizados: {len(bot_instance.AUTHORIZED_USERS) if bot_instance.AUTHORIZED_USERS else 'Todos'}")
         
-        # Iniciar polling
-        await application.run_polling(
-            poll_interval=1.0,
-            timeout=10,
-            bootstrap_retries=5,
-            read_timeout=20,
-            write_timeout=20,
-            connect_timeout=20,
-            pool_timeout=20
-        )
+        # Crear y ejecutar aplicación Flask
+        app = create_flask_app()
+        
+        port = int(os.getenv('PORT', 8080))
+        logger.info(f"✅ Servidor iniciado en puerto {port}")
+        logger.info("🔗 Webhook URL: https://periodismo-bot.onrender.com/webhook")
+        
+        # Ejecutar Flask
+        app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
         
     except Exception as e:
         logger.error(f"Error fatal: {e}")
         raise
 
 if __name__ == "__main__":
-    # Ejecutar bot
-    asyncio.run(main())
+    main()
