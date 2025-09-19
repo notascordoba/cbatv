@@ -43,7 +43,6 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/bot.log'),
         logging.StreamHandler()
     ]
 )
@@ -711,7 +710,7 @@ async def main():
 
 if __name__ == "__main__":
     # Crear directorio de logs si no existe
-    os.makedirs('logs', exist_ok=True)
+
     
     # Ejecutar bot
     asyncio.run(main())
