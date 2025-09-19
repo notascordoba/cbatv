@@ -16,6 +16,13 @@ import io
 import base64
 import logging
 from typing import Optional, Dict, List, Tuple
+
+# Fix para compatibilidad Python 3.10+ con wordpress_xmlrpc
+import collections
+import collections.abc
+if not hasattr(collections, 'Iterable'):
+    collections.Iterable = collections.abc.Iterable
+
 # Import opcional de OpenAI (solo para transcripción de audio)
 try:
     import openai
@@ -23,6 +30,7 @@ try:
 except ImportError:
     openai = None
     OPENAI_AVAILABLE = False
+    
 from groq import Groq
 import requests
 from telegram import Update, Message
@@ -34,6 +42,8 @@ from wordpress_xmlrpc.compat import xmlrpc_client
 from dotenv import load_dotenv
 import time
 from functools import wraps
+from flask import Flask
+import threading
 
 # Cargar variables de entorno
 load_dotenv()
@@ -625,9 +635,6 @@ RESPONDE EN FORMATO JSON:
 
     async def start_health_monitor(self):
         """Servidor simple para health checks en Render"""
-        from flask import Flask
-        import threading
-        
         app = Flask(__name__)
         
         @app.route('/')
@@ -639,6 +646,11 @@ RESPONDE EN FORMATO JSON:
                 'stats': self.stats
             }
         
+        @app.route('/webhook', methods=['POST'])
+        def webhook():
+            """Endpoint para webhook de Telegram"""
+            return {'status': 'webhook_received'}
+            
         @app.route('/stats')
         def get_stats():
             return self.stats
@@ -709,8 +721,5 @@ async def main():
         raise
 
 if __name__ == "__main__":
-    # Crear directorio de logs si no existe
-
-    
     # Ejecutar bot
     asyncio.run(main())
