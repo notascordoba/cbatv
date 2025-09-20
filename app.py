@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-VERSIÓN v1.0.0 - Bot SEO Telegram a WordPress
-Sistema de versionado implementado
-Fixes mínimos sobre base funcional comprobada
+VERSIÓN v1.0.1 - Bot SEO Telegram a WordPress
+Fix crítico: Manejo correcto de asyncio en Flask
 
-CHANGELOG v1.0.0:
-- Fix: Error 'NoneType' object has no attribute 'bot'
-- Fix: Error 'WordPressPost' object has no attribute 'terms_names' 
-- Fix: asyncio event loop issues
-- Base: app_yoast_ultra_final.py (funcional comprobada)
+CHANGELOG v1.0.1:
+- Fix: "no running event loop" error
+- Fix: Volver a patrón asyncio que funcionaba
+- Fix: 'NoneType' object has no attribute 'bot'
+- Fix: 'WordPressPost' object has no attribute 'terms_names'
+- Base: v1.0.0 con correción asyncio
 
-Autor: MiniMax Agent
+Autor: MiniMax Agent  
 Fecha: 2025-09-21
 """
 
@@ -61,7 +61,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 class AutomacionPeriodisticaV1:
-    """Sistema de automatización periodística v1.0.0"""
+    """Sistema de automatización periodística v1.0.1"""
     
     def __init__(self):
         # Configuración desde variables de entorno
@@ -253,7 +253,7 @@ Formato JSON:
             post.slug = article_data['slug']
             post.post_status = 'publish'
             
-            # Fix: Configurar términos correctamente
+            # Fix v1.0.1: Configurar términos correctamente
             post.terms_names = {
                 'category': [article_data.get('categoria', 'Actualidad')],
                 'post_tag': article_data.get('tags', [])
@@ -284,7 +284,7 @@ Formato JSON:
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Comando /start"""
-        welcome_msg = """🤖 **Bot SEO v1.0.0**
+        welcome_msg = """🤖 **Bot SEO v1.0.1**
 
 📸 Enviá foto + texto → Artículo SEO completo
 📝 Solo texto → Artículo optimizado
@@ -301,7 +301,7 @@ Comandos: /start /stats"""
 
     async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Comando /stats"""
-        stats_msg = f"""📊 **Estadísticas v1.0.0**
+        stats_msg = f"""📊 **Estadísticas v1.0.1**
 
 📨 Mensajes: {self.stats['messages_processed']}
 📰 Artículos: {self.stats['articles_created']} 
@@ -325,9 +325,9 @@ Comandos: /start /stats"""
             self.stats['messages_processed'] += 1
             user_text = update.message.caption or "Noticia sin descripción"
             
-            processing_msg = await update.message.reply_text("🔄 **Procesando artículo SEO v1.0.0...**")
+            processing_msg = await update.message.reply_text("🔄 **Procesando artículo SEO v1.0.1...**")
             
-            # Descargar imagen - Fix: usar self.bot en lugar de context.bot
+            # Descargar imagen - Fix v1.0.1: usar self.bot en lugar de context.bot
             try:
                 photo = update.message.photo[-1]
                 file = await self.bot.get_file(photo.file_id)
@@ -349,7 +349,7 @@ Comandos: /start /stats"""
                     
                     if post_id:
                         self.stats['articles_created'] += 1
-                        await processing_msg.edit_text(f"✅ **Artículo v1.0.0 publicado**\n📰 {titulo}\n🔗 ID: {post_id}")
+                        await processing_msg.edit_text(f"✅ **Artículo v1.0.1 publicado**\n📰 {titulo}\n🔗 ID: {post_id}")
                     else:
                         await processing_msg.edit_text("❌ Error publicando")
                         
@@ -376,7 +376,7 @@ Comandos: /start /stats"""
             self.stats['messages_processed'] += 1
             user_text = update.message.text
             
-            processing_msg = await update.message.reply_text("🔄 **Generando artículo SEO v1.0.0...**")
+            processing_msg = await update.message.reply_text("🔄 **Generando artículo SEO v1.0.1...**")
             
             # Generar y publicar
             keyword = self.extract_keyword_from_text(user_text)
@@ -385,7 +385,7 @@ Comandos: /start /stats"""
             
             if post_id:
                 self.stats['articles_created'] += 1
-                await processing_msg.edit_text(f"✅ **Artículo v1.0.0 publicado**\n📰 {titulo}")
+                await processing_msg.edit_text(f"✅ **Artículo v1.0.1 publicado**\n📰 {titulo}")
             else:
                 await processing_msg.edit_text("❌ Error publicando")
                 
@@ -401,28 +401,48 @@ app = Flask(__name__)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Webhook principal"""
+    """Webhook principal - Fix v1.0.1: Manejo correcto de asyncio"""
     try:
         json_data = request.get_json()
         if not json_data:
             return jsonify({'error': 'No JSON data'}), 400
         
-        # Fix: Crear Update con bot del sistema
+        # Fix v1.0.1: Crear Update con bot del sistema
         update = Update.de_json(json_data, sistema.bot)
         
         if not update or not update.message:
             return jsonify({'status': 'no_message'}), 200
         
-        # Fix: Procesar sin crear nuevos event loops
+        # Fix v1.0.1: Manejo correcto de asyncio - crear nuevo event loop
         if update.message.photo:
-            asyncio.create_task(sistema.handle_message_with_photo(update, None))
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(sistema.handle_message_with_photo(update, None))
+            finally:
+                loop.close()
         elif update.message.text:
             if update.message.text.startswith('/start'):
-                asyncio.create_task(sistema.start_command(update, None))
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(sistema.start_command(update, None))
+                finally:
+                    loop.close()
             elif update.message.text.startswith('/stats'):
-                asyncio.create_task(sistema.stats_command(update, None))
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(sistema.stats_command(update, None))
+                finally:
+                    loop.close()
             else:
-                asyncio.create_task(sistema.handle_text_only(update, None))
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(sistema.handle_text_only(update, None))
+                finally:
+                    loop.close()
         
         return jsonify({'status': 'ok'}), 200
         
@@ -435,7 +455,7 @@ def health():
     """Health check"""
     return jsonify({
         'status': 'healthy',
-        'version': 'v1.0.0',
+        'version': 'v1.0.1',
         'timestamp': datetime.now().isoformat()
     })
 
