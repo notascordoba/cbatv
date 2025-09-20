@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 import os
 import logging
-import asyncio
 import requests
 from flask import Flask, request, jsonify
-from telegram import Update, Bot
 from datetime import datetime
 from groq import Groq
 import json
@@ -43,10 +41,74 @@ class ArticleBot:
         # Cliente WordPress
         self.wordpress_client = Client(WORDPRESS_URL, WORDPRESS_USERNAME, WORDPRESS_PASSWORD)
         
-        # Bot de Telegram - UNA instancia global
-        self.bot = Bot(token=TELEGRAM_TOKEN)
+        # Session para requests con timeout
+        self.session = requests.Session()
+        self.session.timeout = 15
         
-        logger.info("✅ ArticleBot inicializado correctamente")
+        # URLs base de Telegram API
+        self.telegram_base = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+        
+        logger.info("✅ ArticleBot inicializado correctamente - SOLO requests síncronos")
+
+    def send_telegram_message(self, chat_id, text):
+        """Envía mensaje usando requests síncronos puros"""
+        try:
+            url = f"{self.telegram_base}/sendMessage"
+            payload = {
+                'chat_id': chat_id,
+                'text': text
+            }
+            
+            response = self.session.post(url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                logger.info("✅ Mensaje enviado exitosamente")
+                return True
+            else:
+                logger.error(f"❌ Error enviando mensaje: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error enviando mensaje: {e}")
+            return False
+
+    def get_telegram_file_info(self, file_id):
+        """Obtiene info del archivo usando requests síncronos"""
+        try:
+            url = f"{self.telegram_base}/getFile"
+            params = {'file_id': file_id}
+            
+            response = self.session.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('ok'):
+                    return data['result']['file_path']
+            
+            logger.error(f"❌ Error obteniendo info del archivo: {response.status_code}")
+            return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error obteniendo info del archivo: {e}")
+            return None
+
+    def download_telegram_image(self, file_path):
+        """Descarga imagen usando requests síncronos"""
+        try:
+            image_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
+            
+            response = self.session.get(image_url, timeout=15)
+            
+            if response.status_code == 200:
+                logger.info("✅ Imagen descargada exitosamente")
+                return response.content
+            else:
+                logger.error(f"❌ Error descargando imagen: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Error descargando imagen: {e}")
+            return None
 
     def get_existing_categories(self):
         """Obtiene las categorías existentes de WordPress"""
@@ -217,15 +279,22 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             logger.error(f"❌ Error publicando en WordPress: {e}")
             return None
 
-    async def handle_message_with_photo(self, update):
-        """Procesa mensaje con imagen - Patrón simple de v1.1.0"""
+    def process_image_message(self, update_data):
+        """Procesa mensaje con imagen - COMPLETAMENTE síncrono"""
         try:
-            message = update.message
-            chat_id = message.chat_id
+            message = update_data['message']
+            chat_id = message['chat']['id']
             
             # Obtener la imagen de mayor resolución
-            photo = message.photo[-1]
-            text = message.caption or "Artículo informativo"
+            photos = message.get('photo', [])
+            if not photos:
+                logger.error("❌ No se encontraron fotos en el mensaje")
+                return
+                
+            photo = photos[-1]  # Mayor resolución
+            file_id = photo['file_id']
+            
+            text = message.get('caption', 'Artículo informativo')
             
             logger.info(f"📸 Procesando mensaje con foto")
             logger.info(f"📝 Texto: {text[:100]}...")
@@ -237,15 +306,19 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             logger.info("🤖 Generando artículo con IA...")
             article_data = self.generate_seo_article_with_ia(text, existing_categories)
             
-            # Descargar imagen usando self.bot (patrón v1.1.0)
-            file = await self.bot.get_file(photo.file_id)
-            image_response = requests.get(file.file_path)
-            
-            if image_response.status_code != 200:
-                logger.error("❌ Error descargando la imagen")
+            # Obtener info del archivo de Telegram
+            file_path = self.get_telegram_file_info(file_id)
+            if not file_path:
+                self.send_telegram_message(chat_id, "❌ Error obteniendo info de la imagen")
                 return
             
-            image_data = image_response.content
+            # Descargar imagen
+            logger.info("📥 Descargando imagen...")
+            image_data = self.download_telegram_image(file_path)
+            
+            if not image_data:
+                self.send_telegram_message(chat_id, "❌ Error descargando la imagen")
+                return
             
             # Subir imagen a WordPress
             logger.info("📤 Subiendo imagen a WordPress...")
@@ -256,16 +329,15 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             post_id = self.publish_to_wordpress(article_data, image_id)
             
             if post_id:
-                # Enviar confirmación SOLO al final (como v1.1.0)
                 success_message = f"""✅ ¡Artículo publicado!
 
 📰 {article_data['titulo_h1']}
 🎯 Palabra clave: {article_data['palabra_clave']}
 🔗 Post ID: {post_id}"""
                 
-                await self.bot.send_message(chat_id=chat_id, text=success_message)
+                self.send_telegram_message(chat_id, success_message)
             else:
-                await self.bot.send_message(chat_id=chat_id, text="❌ Error publicando el artículo")
+                self.send_telegram_message(chat_id, "❌ Error publicando el artículo")
                 
         except Exception as e:
             logger.error(f"❌ Error procesando imagen: {e}")
@@ -275,21 +347,17 @@ article_bot = ArticleBot()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Webhook minimalista basado en v1.1.0"""
+    """Webhook 100% síncrono - Sin librerías async de Telegram"""
     try:
-        json_str = request.get_data().decode('UTF-8')
+        update_data = request.get_json()
         
-        # Usar la instancia global del bot (patrón v1.1.0)
-        update = Update.de_json(json.loads(json_str), article_bot.bot)
+        if not update_data:
+            return jsonify({'error': 'No JSON data'}), 400
         
-        if update.message and update.message.photo:
-            # Patrón exacto de v1.1.0
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(article_bot.handle_message_with_photo(update))
-            finally:
-                loop.close()
+        # Verificar si hay mensaje con foto
+        if update_data.get('message') and update_data['message'].get('photo'):
+            # Procesamiento completamente síncrono
+            article_bot.process_image_message(update_data)
         
         return jsonify({"status": "ok"}), 200
         
@@ -303,9 +371,9 @@ def health():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": "1.1.8"
+        "version": "1.1.9"
     }), 200
 
 if __name__ == '__main__':
-    logger.info("🚀 Iniciando ArticleBot v1.1.8 - Minimalista y funcional...")
+    logger.info("🚀 Iniciando ArticleBot v1.1.9 - SOLO requests síncronos...")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
