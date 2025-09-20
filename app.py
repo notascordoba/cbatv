@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 import os
 import logging
+import asyncio
 import requests
 from flask import Flask, request, jsonify
 from telegram import Update, Bot
-import json
 from datetime import datetime
-import time
 from groq import Groq
+import json
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import posts, media, taxonomies
 from wordpress_xmlrpc.compat import xmlrpc_client
 import tempfile
-import hashlib
 
 # Configuración de logging
 logging.basicConfig(
@@ -35,87 +34,20 @@ if missing_vars:
     logger.error(f"❌ Variables de entorno faltantes: {missing_vars}")
     exit(1)
 
-# Inicializar clientes
+# Inicializar clientes GLOBALES (patrón v1.1.0)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 app = Flask(__name__)
-
-# Cache para evitar procesamiento duplicado
-processed_messages = set()
 
 class ArticleBot:
     def __init__(self):
         # Cliente WordPress
         self.wordpress_client = Client(WORDPRESS_URL, WORDPRESS_USERNAME, WORDPRESS_PASSWORD)
         
-        # Configuración de requests con timeout
-        self.session = requests.Session()
-        self.session.timeout = 30
+        # ✅ UNA SOLA instancia de Bot (patrón v1.1.0)
+        self.bot = Bot(token=TELEGRAM_TOKEN)
         
         logger.info("✅ ArticleBot inicializado correctamente")
-
-    def generate_message_hash(self, update):
-        """Genera hash único del mensaje para evitar duplicados"""
-        message = update.message
-        content = f"{message.chat_id}_{message.message_id}_{message.date}"
-        return hashlib.md5(content.encode()).hexdigest()
-
-    def download_image_sync(self, file_id):
-        """Descarga imagen usando requests síncronos"""
-        try:
-            # Obtener info del archivo
-            file_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile?file_id={file_id}"
-            file_response = self.session.get(file_url, timeout=20)
-            
-            if file_response.status_code != 200:
-                logger.error(f"❌ Error obteniendo info del archivo: {file_response.status_code}")
-                return None
-            
-            file_data = file_response.json()
-            if not file_data.get('ok'):
-                logger.error(f"❌ Error en respuesta de getFile: {file_data}")
-                return None
-            
-            file_path = file_data['result']['file_path']
-            image_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
-            
-            # Descargar imagen
-            logger.info(f"📥 Descargando imagen desde: {image_url}")
-            image_response = self.session.get(image_url, timeout=30)
-            
-            if image_response.status_code == 200:
-                logger.info("✅ Imagen descargada exitosamente")
-                return image_response.content
-            else:
-                logger.error(f"❌ Error descargando imagen: {image_response.status_code}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"❌ Error en descarga síncrona: {e}")
-            return None
-
-    def send_telegram_message_sync(self, chat_id, text):
-        """Envía mensaje usando requests síncronos"""
-        try:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            payload = {
-                'chat_id': chat_id,
-                'text': text,
-                'parse_mode': 'Markdown'
-            }
-            
-            response = self.session.post(url, json=payload, timeout=15)
-            
-            if response.status_code == 200:
-                logger.info("✅ Mensaje enviado exitosamente")
-                return True
-            else:
-                logger.error(f"❌ Error enviando mensaje: {response.status_code} - {response.text}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Error en envío síncrono: {e}")
-            return False
 
     def get_existing_categories(self):
         """Obtiene las categorías existentes de WordPress"""
@@ -138,13 +70,13 @@ Eres un EXPERTO EN REDACCIÓN SEO especializado en PERIODISMO y NEUROMARKETING.
 Crea un artículo INFORMATIVO en ESPAÑOL DE ARGENTINA sobre: "{topic}"
 
 INSTRUCCIONES CRÍTICAS:
-📌 PALABRA CLAVE: Extrae UNA palabra clave ESPECÍFICA y RELEVANTE del tema (NO genérica como "nuevos topes")
-📌 TÍTULO H1: 30-70 caracteres, ESPECÍFICO y que explique claramente DE QUÉ trata (ej: "PJ Critica Plan Energético del Gobierno por Falta de Estado")
+📌 PALABRA CLAVE: Extrae UNA palabra clave ESPECÍFICA y RELEVANTE del tema
+📌 TÍTULO H1: 30-70 caracteres, ESPECÍFICO y claro (ej: "PJ Critica Plan Energético del Gobierno Nacional")
 📌 LONGITUD: 600-1000 palabras mínimo
-📌 ESTRUCTURA: H1 > Introducción > H2 con H3 subsecciones > Conclusión sin usar "En conclusión"
-📌 LENGUAJE: Natural argentino, NO robótico ni repetitivo
+📌 ESTRUCTURA: H1 > Introducción > H2 con H3 subsecciones > Conclusión natural
+📌 LENGUAJE: Natural argentino, NO robótico
 📌 SEO: Meta descripción 120-130 caracteres con palabra clave
-📌 KEYWORDS: Densidad natural, máximo 6 menciones de la palabra clave principal
+📌 KEYWORDS: Densidad natural, máximo 6 menciones
 📌 ENLACES: SOLO a estas categorías WordPress existentes: {categories_str}
 
 FORMATO REQUERIDO:
@@ -187,9 +119,9 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
     def _create_fallback_article(self, topic):
         """Artículo de respaldo si falla la IA"""
         return {
-            "titulo_h1": f"Información Actualizada sobre {topic[:50]}",
+            "titulo_h1": f"Información sobre {topic[:50]}",
             "palabra_clave": "información-política",
-            "meta_descripcion": f"Conocé todos los detalles sobre {topic[:80]}. Información completa para Argentina.",
+            "meta_descripcion": f"Conocé los detalles sobre {topic[:80]}. Info completa para Argentina.",
             "slug": "informacion-politica-actualizada",
             "contenido_html": f"""
             <p>Te contamos toda la información sobre <strong>la situación política actual</strong>.</p>
@@ -197,7 +129,7 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             <p>{topic}</p>
             <p>Para más información, visitá nuestra sección de <a href="/categoria/actualidad">actualidad</a>.</p>
             """,
-            "resumen_imagen": f"Imagen informativa sobre {topic[:50]}"
+            "resumen_imagen": f"Imagen sobre {topic[:50]}"
         }
 
     def upload_image_to_wordpress(self, image_data, alt_text_imagen):
@@ -288,20 +220,11 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             logger.error(f"❌ Error publicando en WordPress: {e}")
             return None
 
-    def process_image_message_sync(self, update):
-        """Procesa mensaje completamente de forma síncrona"""
+    async def handle_message_with_photo(self, update):
+        """Procesa mensaje con imagen usando el patrón exitoso de v1.1.0"""
         try:
             message = update.message
             chat_id = message.chat_id
-            
-            # Verificar si ya procesamos este mensaje
-            message_hash = self.generate_message_hash(update)
-            if message_hash in processed_messages:
-                logger.info(f"⏭️ Mensaje ya procesado, omitiendo: {message_hash}")
-                return
-            
-            # Marcar mensaje como procesado
-            processed_messages.add(message_hash)
             
             # Obtener la imagen de mayor resolución
             photo = message.photo[-1]
@@ -310,8 +233,8 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             logger.info(f"📸 Procesando mensaje con foto")
             logger.info(f"📝 Texto: {text[:100]}...")
             
-            # Enviar confirmación
-            self.send_telegram_message_sync(chat_id, "📝 Procesando tu solicitud...")
+            # ✅ Usar self.bot (MISMA instancia, patrón v1.1.0)
+            await self.bot.send_message(chat_id=chat_id, text="📝 Procesando tu solicitud...")
             
             # Obtener categorías WordPress existentes
             existing_categories = self.get_existing_categories()
@@ -320,13 +243,15 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             logger.info("🤖 Generando artículo con IA...")
             article_data = self.generate_seo_article_with_ia(text, existing_categories)
             
-            # Descargar imagen
-            logger.info("📥 Descargando imagen...")
-            image_data = self.download_image_sync(photo.file_id)
+            # ✅ Descargar imagen usando self.bot (patrón v1.1.0)
+            file = await self.bot.get_file(photo.file_id)
+            image_response = requests.get(file.file_path)  # ✅ Patrón original de v1.1.0
             
-            if not image_data:
-                self.send_telegram_message_sync(chat_id, "❌ Error descargando la imagen")
+            if image_response.status_code != 200:
+                await self.bot.send_message(chat_id=chat_id, text="❌ Error descargando la imagen")
                 return
+            
+            image_data = image_response.content
             
             # Subir imagen a WordPress
             logger.info("📤 Subiendo imagen a WordPress...")
@@ -347,28 +272,34 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
 
 🔗 Post ID: {post_id}"""
                 
-                self.send_telegram_message_sync(chat_id, success_message)
+                await self.bot.send_message(chat_id=chat_id, text=success_message)
             else:
-                self.send_telegram_message_sync(chat_id, "❌ Error publicando el artículo")
+                await self.bot.send_message(chat_id=chat_id, text="❌ Error publicando el artículo")
                 
         except Exception as e:
             logger.error(f"❌ Error procesando imagen: {e}")
-            self.send_telegram_message_sync(chat_id, f"❌ Error: {str(e)}")
+            await self.bot.send_message(chat_id=chat_id, text=f"❌ Error: {str(e)}")
 
-# Instancia global del bot
+# ✅ Instancia GLOBAL única (patrón v1.1.0)
 article_bot = ArticleBot()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Webhook completamente síncrono"""
+    """Webhook usando patrón exitoso de v1.1.0"""
     try:
         json_str = request.get_data().decode('UTF-8')
-        update_data = json.loads(json_str)
-        update = Update.de_json(update_data, None)
+        
+        # ✅ Usar self.bot de la instancia global (patrón v1.1.0)
+        update = Update.de_json(json.loads(json_str), article_bot.bot)
         
         if update.message and update.message.photo:
-            # Procesamiento 100% síncrono
-            article_bot.process_image_message_sync(update)
+            # ✅ Patrón exacto de v1.1.0
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(article_bot.handle_message_with_photo(update))
+            finally:
+                loop.close()
         
         return jsonify({"status": "ok"}), 200
         
@@ -382,10 +313,9 @@ def health():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": "1.1.6",
-        "processed_messages": len(processed_messages)
+        "version": "1.1.7"
     }), 200
 
 if __name__ == '__main__':
-    logger.info("🚀 Iniciando ArticleBot v1.1.6 - Completamente síncrono...")
+    logger.info("🚀 Iniciando ArticleBot v1.1.7 - Patrón exitoso de v1.1.0...")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
