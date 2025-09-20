@@ -34,9 +34,8 @@ if missing_vars:
     logger.error(f"❌ Variables de entorno faltantes: {missing_vars}")
     exit(1)
 
-# Inicializar clientes GLOBALES (patrón v1.1.0)
+# Inicializar clientes
 groq_client = Groq(api_key=GROQ_API_KEY)
-
 app = Flask(__name__)
 
 class ArticleBot:
@@ -44,7 +43,7 @@ class ArticleBot:
         # Cliente WordPress
         self.wordpress_client = Client(WORDPRESS_URL, WORDPRESS_USERNAME, WORDPRESS_PASSWORD)
         
-        # ✅ UNA SOLA instancia de Bot (patrón v1.1.0)
+        # Bot de Telegram - UNA instancia global
         self.bot = Bot(token=TELEGRAM_TOKEN)
         
         logger.info("✅ ArticleBot inicializado correctamente")
@@ -71,7 +70,7 @@ Crea un artículo INFORMATIVO en ESPAÑOL DE ARGENTINA sobre: "{topic}"
 
 INSTRUCCIONES CRÍTICAS:
 📌 PALABRA CLAVE: Extrae UNA palabra clave ESPECÍFICA y RELEVANTE del tema
-📌 TÍTULO H1: 30-70 caracteres, ESPECÍFICO y claro (ej: "PJ Critica Plan Energético del Gobierno Nacional")
+📌 TÍTULO H1: 30-70 caracteres, ESPECÍFICO y claro
 📌 LONGITUD: 600-1000 palabras mínimo
 📌 ESTRUCTURA: H1 > Introducción > H2 con H3 subsecciones > Conclusión natural
 📌 LENGUAJE: Natural argentino, NO robótico
@@ -85,8 +84,7 @@ FORMATO REQUERIDO:
   "palabra_clave": "palabra-clave-especifica",
   "meta_descripcion": "Descripción de 120-130 caracteres con palabra clave",
   "slug": "slug-optimizado-con-palabra-clave",
-  "contenido_html": "Artículo completo con H2, H3 y enlaces internos SOLO a categorías existentes",
-  "resumen_imagen": "Descripción específica para imagen del tema exacto"
+  "contenido_html": "Artículo completo con H2, H3 y enlaces internos SOLO a categorías existentes"
 }}
 
 RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
@@ -128,8 +126,7 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             <h2>Detalles Importantes</h2>
             <p>{topic}</p>
             <p>Para más información, visitá nuestra sección de <a href="/categoria/actualidad">actualidad</a>.</p>
-            """,
-            "resumen_imagen": f"Imagen sobre {topic[:50]}"
+            """
         }
 
     def upload_image_to_wordpress(self, image_data, alt_text_imagen):
@@ -221,7 +218,7 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             return None
 
     async def handle_message_with_photo(self, update):
-        """Procesa mensaje con imagen usando el patrón exitoso de v1.1.0"""
+        """Procesa mensaje con imagen - Patrón simple de v1.1.0"""
         try:
             message = update.message
             chat_id = message.chat_id
@@ -233,9 +230,6 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             logger.info(f"📸 Procesando mensaje con foto")
             logger.info(f"📝 Texto: {text[:100]}...")
             
-            # ✅ Usar self.bot (MISMA instancia, patrón v1.1.0)
-            await self.bot.send_message(chat_id=chat_id, text="📝 Procesando tu solicitud...")
-            
             # Obtener categorías WordPress existentes
             existing_categories = self.get_existing_categories()
             
@@ -243,12 +237,12 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             logger.info("🤖 Generando artículo con IA...")
             article_data = self.generate_seo_article_with_ia(text, existing_categories)
             
-            # ✅ Descargar imagen usando self.bot (patrón v1.1.0)
+            # Descargar imagen usando self.bot (patrón v1.1.0)
             file = await self.bot.get_file(photo.file_id)
-            image_response = requests.get(file.file_path)  # ✅ Patrón original de v1.1.0
+            image_response = requests.get(file.file_path)
             
             if image_response.status_code != 200:
-                await self.bot.send_message(chat_id=chat_id, text="❌ Error descargando la imagen")
+                logger.error("❌ Error descargando la imagen")
                 return
             
             image_data = image_response.content
@@ -262,14 +256,11 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             post_id = self.publish_to_wordpress(article_data, image_id)
             
             if post_id:
-                success_message = f"""✅ ¡Artículo publicado exitosamente!
+                # Enviar confirmación SOLO al final (como v1.1.0)
+                success_message = f"""✅ ¡Artículo publicado!
 
-📰 Título: {article_data['titulo_h1']}
+📰 {article_data['titulo_h1']}
 🎯 Palabra clave: {article_data['palabra_clave']}
-📝 Meta descripción: {article_data['meta_descripcion']}
-🔗 Slug: {article_data['slug']}
-📸 Imagen destacada: {"Sí" if image_id else "No"}
-
 🔗 Post ID: {post_id}"""
                 
                 await self.bot.send_message(chat_id=chat_id, text=success_message)
@@ -278,22 +269,21 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
                 
         except Exception as e:
             logger.error(f"❌ Error procesando imagen: {e}")
-            await self.bot.send_message(chat_id=chat_id, text=f"❌ Error: {str(e)}")
 
-# ✅ Instancia GLOBAL única (patrón v1.1.0)
+# Instancia global única
 article_bot = ArticleBot()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Webhook usando patrón exitoso de v1.1.0"""
+    """Webhook minimalista basado en v1.1.0"""
     try:
         json_str = request.get_data().decode('UTF-8')
         
-        # ✅ Usar self.bot de la instancia global (patrón v1.1.0)
+        # Usar la instancia global del bot (patrón v1.1.0)
         update = Update.de_json(json.loads(json_str), article_bot.bot)
         
         if update.message and update.message.photo:
-            # ✅ Patrón exacto de v1.1.0
+            # Patrón exacto de v1.1.0
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
@@ -313,9 +303,9 @@ def health():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": "1.1.7"
+        "version": "1.1.8"
     }), 200
 
 if __name__ == '__main__':
-    logger.info("🚀 Iniciando ArticleBot v1.1.7 - Patrón exitoso de v1.1.0...")
+    logger.info("🚀 Iniciando ArticleBot v1.1.8 - Minimalista y funcional...")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
