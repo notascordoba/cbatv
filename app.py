@@ -193,72 +193,121 @@ class TelegramToWordPressBotSEO:
             if not self.groq_client:
                 return self._create_fallback_seo_article(user_text)
             
-            # Prompt optimizado para SEO profesional
-            prompt = f"""Crea un artículo SEO PROFESIONAL basado en esta información periodística.
+            # Prompt ULTRA-ESPECÍFICO para cumplir 100% con Yoast SEO
+            prompt = f"""Crea un artículo SEO 100% OPTIMIZADO que pase TODAS las validaciones de Yoast SEO.
 
-INFORMACIÓN DEL PERIODISTA: {user_text}
+TEXTO DEL PERIODISTA: {user_text}
 TIENE IMAGEN: {'Sí' if has_image else 'No'}
 
-Debes generar un JSON con esta estructura EXACTA:
+GENERA JSON CON ESTA ESTRUCTURA EXACTA:
 
 {{
-    "keyword_principal": "palabra clave principal de 2-3 palabras",
-    "titulo_h1": "Título principal de 30-70 caracteres con keyword",
-    "meta_descripcion": "Meta descripción de exactamente 130 caracteres que incluya la keyword principal",
-    "slug_url": "url-amigable-con-guiones",
-    "contenido_html": "Artículo completo en HTML con estructura H2, H3, H4 y mínimo 800 palabras",
-    "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-    "categoria": "categoría principal del artículo",
-    "enlace_interno": "/categoria/tema-relacionado",
-    "enlace_externo": "https://sitio-autoridad.com",
-    "datos_estructurados": "JSON-LD válido para Article",
-    "intenciones_busqueda": ["intención 1", "intención 2", "intención 3"]
+    "keyword_principal": "frase clave exacta de 2-4 palabras extraída del texto",
+    "titulo_h1": "Título de 40-55 caracteres que COMIENCE con la keyword principal exacta",
+    "meta_descripcion": "Descripción de 130 caracteres que CONTENGA la keyword principal exacta",
+    "slug_url": "keyword-principal-con-guiones-sin-espacios",
+    "contenido_html": "Artículo HTML de MÍNIMO 800 palabras reales",
+    "tags": ["keyword principal", "tag2", "tag3", "tag4", "tag5"],
+    "categoria": "USAR SOLO: Actualidad, Deportes, Cultura, Política, Sociedad",
+    "enlace_interno_1": "/categoria/relacionada",
+    "enlace_interno_2": "/etiqueta/tema-relacionado"
 }}
 
-REQUISITOS ESPECÍFICOS SEO:
+REGLAS CRÍTICAS YOAST SEO - CUMPLIR 100%:
 
-1. KEYWORD PRINCIPAL: 
-   - Debe ser relevante al contenido periodístico
-   - 2-3 palabras máximo
-   - Incluir en título, meta descripción y contenido
+1. KEYWORD PRINCIPAL:
+   - Extraer EXACTAMENTE del texto del periodista
+   - 2-4 palabras descriptivas del tema principal
+   - Ejemplo: si habla de "playa hippies", keyword: "playa de los hippies"
 
-2. TÍTULO H1:
-   - Entre 30-70 caracteres
-   - Incluir keyword principal
-   - Atractivo y optimizado para CTR
-   - Estilo periodístico profesional
+2. TÍTULO H1 (40-55 caracteres):
+   - DEBE EMPEZAR con la keyword principal exacta
+   - Formato: "Keyword Principal: descripción adicional"
+   - Ejemplo: "Playa de los hippies: nueva tendencia en Córdoba"
 
-3. META DESCRIPCIÓN:
-   - Exactamente 130 caracteres
-   - Incluir keyword principal
-   - Call to action implícito
-   - Resumir la noticia
+3. META DESCRIPCIÓN (130 caracteres EXACTOS):
+   - INCLUIR keyword principal literal en los primeros 30 caracteres
+   - Ejemplo: "Playa de los hippies atrae turistas. Descubre esta nueva tendencia en Córdoba con actividades y servicios únicos."
 
-4. CONTENIDO HTML: 
-   - Mínimo 800 palabras
-   - Usar H2 para secciones principales (¿Qué pasó?, Contexto, Análisis, etc.)
-   - Usar H3 para subsecciones (antecedentes, consecuencias, reacciones)
-   - Usar H4 para detalles específicos (datos, declaraciones, cronología)
-   - Incluir párrafos informativos con estilo periodístico
-   - Responder las 5W del periodismo (qué, quién, cuándo, dónde, por qué)
-   - Incluir listas de datos relevantes
+4. SLUG URL:
+   - SOLO la keyword principal con guiones
+   - Ejemplo: "playa-de-los-hippies"
+   - NO incluir categorías ni palabras extra
 
-5. TAGS: 5 etiquetas relevantes al tema noticioso
+5. CONTENIDO HTML - MÍNIMO 800 PALABRAS REALES:
+   
+   PRIMER PÁRRAFO (CRÍTICO):
+   - DEBE empezar con la keyword principal en la primera oración
+   - Ejemplo: "La playa de los hippies se ha convertido en..."
+   
+   ESTRUCTURA OBLIGATORIA:
+   
+   <p>LA KEYWORD PRINCIPAL debe aparecer en la primera oración. [Continuar párrafo con contexto]</p>
+   
+   <h2>¿Qué es la [keyword principal]?</h2>
+   <p>[Explicación detallada incluyendo keyword y sinónimos]</p>
+   
+   <h3>Características de la [keyword principal]</h3>
+   <p>[Párrafo con keyword principal y variaciones]</p>
+   
+   <h3>Historia y contexto</h3>
+   <p>[200+ palabras con información relevante]</p>
+   
+   <h2>¿Dónde encontrar la [keyword principal]?</h2>
+   <p>[Ubicación, direcciones, referencias]</p>
+   
+   <h3>Servicios y actividades</h3>
+   <ul>
+   <li>[Actividad 1 relacionada con keyword]</li>
+   <li>[Actividad 2]</li>
+   <li>[Actividad 3]</li>
+   </ul>
+   
+   <h2>Impacto de la [keyword principal]</h2>
+   <p>[Análisis de impacto social, económico, turístico]</p>
+   
+   <h3>Reacciones de la comunidad</h3>
+   <p>[Opiniones, testimonios, perspectivas]</p>
+   
+   <h4>Datos relevantes</h4>
+   <p>[Estadísticas, números, fechas específicas]</p>
+   
+   <h2>Futuro de la [keyword principal]</h2>
+   <p>[Proyecciones, planes, desarrollo futuro]</p>
 
-6. ENLACES: 
-   - Enlace interno a categoría relacionada
-   - Enlace externo a fuente oficial o sitio de autoridad
+6. ENLACES - SOLO INTERNOS:
+   - NO incluir enlaces externos a otros medios
+   - SOLO enlaces internos: "/categoria/relacionada", "/etiqueta/tema", "/archivo-relacionado"
+   - Enlaces internos en contexto natural del contenido
 
-7. DATOS ESTRUCTURADOS: JSON-LD válido para NewsArticle
+7. DISTRIBUCIÓN KEYWORD:
+   - Usar keyword principal 5-8 veces en el contenido
+   - Incluir en H2 al menos 2 veces
+   - Incluir sinónimos en H3
 
-8. CONTENIDO PERIODÍSTICO: 
-   - Información verificable y precisa
-   - Contexto histórico cuando sea relevante
-   - Múltiples perspectivas si aplica
-   - Impacto social o relevancia pública
+8. CATEGORÍA:
+   - USAR SOLO: Actualidad, Deportes, Cultura, Política, Sociedad
+   - NO crear categorías nuevas
 
-El artículo debe ser PROFESIONAL, INFORMATIVO, VERIFICABLE y OPTIMIZADO para SEO.
-"""
+9. CONTENIDO MÍNIMO:
+   - 800 palabras REALES contadas
+   - Párrafos de 3-5 oraciones
+   - Información útil y verificable
+   - Enlaces internos integrados naturalmente en el texto
+
+IMPORTANTE: NO incluir enlaces externos a otros medios. SOLO enlaces internos.
+
+EJEMPLO FORMATO ESPERADO:
+Si el texto menciona "playa de los hippies en Córdoba":
+- keyword_principal: "playa de los hippies"
+- titulo_h1: "Playa de los hippies: el nuevo fenómeno turístico"
+- slug_url: "playa-de-los-hippies"
+- meta_descripcion: "Playa de los hippies revoluciona el turismo. Conoce esta tendencia única que atrae visitantes con su estilo alternativo."
+- enlace_interno_1: "/categoria/turismo"
+- enlace_interno_2: "/etiqueta/cordoba"
+
+El artículo DEBE pasar el 100% de las validaciones de Yoast SEO.
+RECORDAR: SOLO enlaces internos, NO enlaces externos.
 
             response = self.groq_client.chat.completions.create(
                 model='llama-3.1-8b-instant',
@@ -309,8 +358,8 @@ El artículo debe ser PROFESIONAL, INFORMATIVO, VERIFICABLE y OPTIMIZADO para SE
                 "contenido_html": contenido.group(1) if contenido else f"<h2>Información Relevante</h2><p>{user_text}</p><h3>Contexto y Análisis</h3><p>Desarrollo completo de la información proporcionada por nuestro corresponsal.</p>",
                 "tags": ["actualidad", "noticias", "información", "sociedad", "último"],
                 "categoria": "Actualidad",
-                "enlace_interno": "/categoria/actualidad",
-                "enlace_externo": "https://www.perfil.com",
+                "enlace_interno_1": "/categoria/actualidad",
+                "enlace_interno_2": "/etiqueta/noticias",
                 "datos_estructurados": f'{{"@context":"https://schema.org","@type":"NewsArticle","headline":"Noticia de Actualidad","author":{{"@type":"Person","name":"Redacción"}},"datePublished":"{datetime.now().isoformat()}"}}',
                 "intenciones_busqueda": ["últimas noticias", "qué está pasando", "información actualizada"]
             }
@@ -356,20 +405,23 @@ El artículo debe ser PROFESIONAL, INFORMATIVO, VERIFICABLE y OPTIMIZADO para SE
 """,
             "tags": [keyword.split()[0] if keyword.split() else "noticias", "actualidad", "información", "sociedad", "corresponsal"],
             "categoria": "Actualidad",
-            "enlace_interno": "/categoria/actualidad",
-            "enlace_externo": "https://www.infobae.com",
+            "enlace_interno_1": "/categoria/actualidad",
+            "enlace_interno_2": "/etiqueta/noticias",
             "datos_estructurados": f'{{"@context":"https://schema.org","@type":"NewsArticle","headline":"{titulo}","author":{{"@type":"Person","name":"Corresponsal"}},"datePublished":"{datetime.now().isoformat()}"}}',
             "intenciones_busqueda": [f"noticias {keyword}", f"información {keyword}", f"{keyword} actualidad"]
         }
 
-    async def upload_image_to_wordpress(self, image_data: bytes, filename: str) -> Optional[str]:
-        """Sube imagen a WordPress y retorna URL"""
+    async def upload_image_to_wordpress(self, image_data: bytes, filename: str, keyword_principal: str = "") -> Optional[str]:
+        """Sube imagen a WordPress con alt text optimizado"""
         try:
             if not self.wp_client:
                 return None
             
             # Redimensionar imagen
             resized_image = self.resize_image(image_data)
+            
+            # Alt text optimizado con keyword principal
+            alt_text = keyword_principal if keyword_principal else "Imagen del artículo"
             
             # Preparar datos para WordPress
             data = {
@@ -382,6 +434,23 @@ El artículo debe ser PROFESIONAL, INFORMATIVO, VERIFICABLE y OPTIMIZADO para SE
             response = self.wp_client.call(media.UploadFile(data))
             
             if response and 'url' in response:
+                # Intentar actualizar alt text de la imagen
+                try:
+                    if 'id' in response:
+                        # Crear post de attachment con alt text
+                        attachment_post = wordpress_xmlrpc.WordPressPost()
+                        attachment_post.id = response['id']
+                        attachment_post.post_type = 'attachment'
+                        attachment_post.custom_fields = [
+                            {'key': '_wp_attachment_image_alt', 'value': alt_text}
+                        ]
+                        
+                        # Actualizar attachment
+                        self.wp_client.call(posts.EditPost(response['id'], attachment_post))
+                        logger.info(f"✅ Alt text configurado: {alt_text}")
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo configurar alt text: {e}")
+                
                 logger.info(f"✅ Imagen subida a WordPress: {response['url']}")
                 return response['url']
             else:
@@ -393,7 +462,7 @@ El artículo debe ser PROFESIONAL, INFORMATIVO, VERIFICABLE y OPTIMIZADO para SE
             return None
 
     async def publish_seo_article_to_wordpress(self, article_data: Dict, image_url: Optional[str] = None) -> Tuple[Optional[int], Optional[str]]:
-        """Publica artículo SEO completo en WordPress"""
+        """Publica artículo SEO completo en WordPress con imagen featured"""
         try:
             if not self.wp_client:
                 return None, None
@@ -403,19 +472,15 @@ El artículo debe ser PROFESIONAL, INFORMATIVO, VERIFICABLE y OPTIMIZADO para SE
             post.title = article_data['titulo_h1']
             post.slug = article_data['slug_url']
             
-            # Contenido completo con imagen si existe
-            content = ""
-            if image_url:
-                content += f'<img src="{image_url}" alt="{article_data["titulo_h1"]}" class="wp-image-featured" style="width:100%; height:auto; margin-bottom: 20px;">\n\n'
+            # Contenido SIN imagen en el contenido (se usa como featured)
+            content = article_data['contenido_html']
             
-            content += article_data['contenido_html']
+            # Agregar enlaces internos si no están en el contenido
+            if article_data.get('enlace_interno_1') and article_data['enlace_interno_1'] not in content:
+                content += f'\n<p><strong>Relacionado:</strong> <a href="{article_data["enlace_interno_1"]}">Más artículos de la categoría</a></p>'
             
-            # Agregar enlaces si no están en el contenido
-            if article_data.get('enlace_interno') and article_data['enlace_interno'] not in content:
-                content += f'\n<p><strong>Relacionado:</strong> <a href="{article_data["enlace_interno"]}">Más noticias de la categoría</a></p>'
-            
-            if article_data.get('enlace_externo') and article_data['enlace_externo'] not in content:
-                content += f'\n<p><strong>Fuente:</strong> <a href="{article_data["enlace_externo"]}" target="_blank" rel="noopener">Más información</a></p>'
+            if article_data.get('enlace_interno_2') and article_data['enlace_interno_2'] not in content:
+                content += f'\n<p><strong>También te puede interesar:</strong> <a href="{article_data["enlace_interno_2"]}">Contenido relacionado</a></p>'
             
             # Agregar datos estructurados
             if article_data.get('datos_estructurados'):
@@ -436,25 +501,69 @@ El artículo debe ser PROFESIONAL, INFORMATIVO, VERIFICABLE y OPTIMIZADO para SE
                     'value': article_data['meta_descripcion']
                 })
             
-            # Keyword principal
+            # Keyword principal para Yoast
             if article_data.get('keyword_principal'):
                 post.custom_fields.append({
                     'key': '_yoast_wpseo_focuskw',
                     'value': article_data['keyword_principal']
                 })
             
-            # Tags y categoría
+            # Configurar categoría EXISTENTE (no crear nueva)
+            valid_categories = ['Actualidad', 'Deportes', 'Cultura', 'Política', 'Sociedad']
+            categoria = article_data.get('categoria', 'Actualidad')
+            if categoria not in valid_categories:
+                categoria = 'Actualidad'
+            
+            post.terms_names = {
+                'category': [categoria]
+            }
+            
+            # Tags (incluir keyword principal como primer tag)
             if article_data.get('tags'):
-                post.terms_names = {
-                    'post_tag': article_data['tags']
-                }
+                tags = article_data['tags']
+                # Asegurar que keyword principal esté en tags
+                keyword = article_data.get('keyword_principal', '')
+                if keyword and keyword not in tags:
+                    tags = [keyword] + tags[:4]  # Mantener máximo 5 tags
+                post.terms_names['post_tag'] = tags
             
-            if article_data.get('categoria'):
-                post.terms_names = post.terms_names or {}
-                post.terms_names['category'] = [article_data['categoria']]
-            
-            # Publicar post
+            # Publicar post PRIMERO
             post_id = self.wp_client.call(posts.NewPost(post))
+            
+            # Configurar imagen featured SI existe
+            if image_url and post_id:
+                try:
+                    # Obtener attachment ID de la imagen ya subida
+                    # WordPress ya tiene la imagen, necesitamos obtener su ID
+                    media_items = self.wp_client.call(media.GetMediaLibrary())
+                    attachment_id = None
+                    
+                    # Buscar la imagen por URL
+                    for item in media_items:
+                        if hasattr(item, 'link') and image_url in item.link:
+                            attachment_id = item.id
+                            break
+                        elif hasattr(item, 'attachment_url') and image_url in item.attachment_url:
+                            attachment_id = item.id
+                            break
+                    
+                    if attachment_id:
+                        # Establecer como featured image
+                        post.custom_fields.append({
+                            'key': '_thumbnail_id',
+                            'value': str(attachment_id)
+                        })
+                        
+                        # Actualizar post con featured image
+                        post.id = post_id
+                        self.wp_client.call(posts.EditPost(post_id, post))
+                        
+                        logger.info(f"✅ Imagen establecida como featured con ID: {attachment_id}")
+                    else:
+                        logger.warning("⚠️ No se pudo establecer imagen featured - attachment ID no encontrado")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Error estableciendo imagen featured: {e}")
             
             logger.info(f"✅ Artículo SEO publicado exitosamente - ID: {post_id}")
             return post_id, article_data['titulo_h1']
@@ -607,21 +716,21 @@ Comandos: /start /help /stats
                 self.stats['errors'] += 1
                 return
             
-            # Actualizar estado
+            # Generar artículo SEO PRIMERO para obtener keyword
             await processing_msg.edit_text("🧠 **Generando artículo SEO con IA...**\n📝 Creando estructura H1, H2, H3, H4\n🎯 Optimizando keywords y meta descripción")
             
-            # Generar artículo SEO
             has_image = bool(content_data['image_data'])
             article_data = self.generate_seo_article(full_text, has_image)
             
-            # Subir imagen si existe
+            # Subir imagen CON keyword para alt text si existe
             image_url = None
             if content_data['image_data']:
-                await processing_msg.edit_text("📸 **Procesando imagen...**\n🖼️ Redimensionando a 1200x675px\n⬆️ Subiendo a WordPress")
+                await processing_msg.edit_text("📸 **Procesando imagen...**\n🖼️ Redimensionando a 1200x675px\n⬆️ Subiendo a WordPress con alt text optimizado")
                 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"article_seo_{timestamp}.jpg"
-                image_url = await self.upload_image_to_wordpress(content_data['image_data'], filename)
+                keyword_principal = article_data.get('keyword_principal', '')
+                image_url = await self.upload_image_to_wordpress(content_data['image_data'], filename, keyword_principal)
             
             # Publicar artículo en WordPress
             await processing_msg.edit_text("🚀 **Publicando artículo SEO...**\n📊 Aplicando optimizaciones\n🌐 Enviando a WordPress")
