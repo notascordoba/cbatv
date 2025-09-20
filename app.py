@@ -16,6 +16,7 @@ from wordpress_xmlrpc.methods import posts, media, taxonomies
 from wordpress_xmlrpc.compat import xmlrpc_client
 import tempfile
 import uuid
+import threading
 
 # Configuración de logging
 logging.basicConfig(
@@ -40,11 +41,6 @@ if missing_vars:
 
 # Inicializar clientes
 groq_client = Groq(api_key=GROQ_API_KEY)
-bot_instance = Bot(token=TELEGRAM_TOKEN)
-
-# Configuración mejorada de conexiones HTTP
-TELEGRAM_TIMEOUT = 30  # Timeout aumentado
-TELEGRAM_POOL_SIZE = 10  # Tamaño del pool aumentado
 
 app = Flask(__name__)
 
@@ -53,13 +49,28 @@ class ArticleBot:
         # Cliente WordPress
         self.wordpress_client = Client(WORDPRESS_URL, WORDPRESS_USERNAME, WORDPRESS_PASSWORD)
         
-        # Bot de Telegram con configuración de pool mejorada
-        self.bot = Bot(
-            token=TELEGRAM_TOKEN,
-            request=aiohttp.ClientTimeout(total=TELEGRAM_TIMEOUT)
-        )
+        # Bot de Telegram
+        self.bot = Bot(token=TELEGRAM_TOKEN)
         
         logger.info("✅ ArticleBot inicializado correctamente")
+
+    def run_async_in_thread(self, coro):
+        """Ejecuta código asíncrono en un thread separado para evitar conflictos de event loop"""
+        def thread_target():
+            try:
+                # Crear loop limpio en el thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(coro)
+                loop.close()
+                return result
+            except Exception as e:
+                logger.error(f"❌ Error en thread async: {e}")
+                return None
+        
+        thread = threading.Thread(target=thread_target)
+        thread.start()
+        thread.join()
 
     async def download_image_with_retry(self, url, max_retries=3):
         """Descarga imagen con reintentos y mejor manejo de conexiones"""
@@ -255,7 +266,7 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
             return None
 
     async def process_image_message(self, update):
-        """Procesa mensaje con imagen usando mejor gestión de conexiones"""
+        """Procesa mensaje con imagen usando gestión segura de event loops"""
         try:
             message = update.message
             chat_id = message.chat_id
@@ -328,25 +339,31 @@ RECORDA: Actúa como PERIODISTA ARGENTINO experto, NO como IA genérica.
         
         logger.error("❌ No se pudo enviar mensaje después de todos los reintentos")
 
+    def process_message_sync(self, update):
+        """Wrapper síncrono que ejecuta el procesamiento asíncrono en thread separado"""
+        try:
+            # Crear coroutine
+            coro = self.process_image_message(update)
+            
+            # Ejecutar en thread separado para evitar conflictos de event loop
+            self.run_async_in_thread(coro)
+            
+        except Exception as e:
+            logger.error(f"❌ Error en procesamiento síncrono: {e}")
+
 # Instancia global del bot
 article_bot = ArticleBot()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Webhook mejorado para manejar actualizaciones de Telegram"""
+    """Webhook con manejo seguro de event loops"""
     try:
         json_str = request.get_data().decode('UTF-8')
-        update = Update.de_json(json.loads(json_str), article_bot.bot)
+        update = Update.de_json(json.loads(json_str), Bot(token=TELEGRAM_TOKEN))
         
         if update.message and update.message.photo:
-            # Crear y ejecutar event loop para función async
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            try:
-                loop.run_until_complete(article_bot.process_image_message(update))
-            finally:
-                loop.close()
+            # Usar método síncrono que gestiona el async internamente
+            article_bot.process_message_sync(update)
         
         return jsonify({"status": "ok"}), 200
         
@@ -360,9 +377,9 @@ def health():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": "1.1.4"
+        "version": "1.1.5"
     }), 200
 
 if __name__ == '__main__':
-    logger.info("🚀 Iniciando ArticleBot v1.1.4 con gestión de conexiones mejorada...")
+    logger.info("🚀 Iniciando ArticleBot v1.1.5 con event loop seguro...")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
