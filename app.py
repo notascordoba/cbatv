@@ -1,47 +1,55 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-Bot de Automatización Periodística v1.1.1
-Autor: MiniMax Agent
-Última actualización: 2025-09-21
+VERSIÓN v1.1.2 - BASE FUNCIONAL + Mejoras Específicas
+Basado en: app_v1.1.0.py (webhook que funcionaba)
 
-CHANGELOG v1.1.1:
-- Mejorar upload_image_to_wordpress: configurar título y alt text con palabra clave
-- Reescribir prompt de IA para experto en redacción SEO/periodismo/neuromarketing argentino
-- Asegurar configuración completa de campos Yoast SEO
-- Contenido mínimo 1000 palabras con estructura H2, H3, H4
-- Enlaces internos automáticos
+CHANGELOG v1.1.2:
+- Base: app_v1.1.0.py (webhook y asyncio que funcionaba)
+- Mejorado: upload_image_to_wordpress con título y alt text
+- Mejorado: Prompt de IA para contenido profesional
+- Mejorado: Configuración SEO completa
+- Conservado: Sistema de webhook funcional
+
+Autor: MiniMax Agent
+Fecha: 2025-09-21
 """
 
 import os
-import json
 import asyncio
-import logging
-import hashlib
-from io import BytesIO
+import aiohttp
+import aiofiles
 from datetime import datetime
-from typing import Dict, Optional, Tuple, List
-from collections.abc import Iterable
-import io
-
-# Flask
-from flask import Flask, request, jsonify
-
-# Telegram
-from telegram import Update, Bot
-from telegram.constants import ParseMode
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
-
-# WordPress
-from wordpress_xmlrpc import Client, WordPressPost
-from wordpress_xmlrpc.methods import posts, media
-import xmlrpc.client as xmlrpc_client
-
-# Groq
-from groq import Groq
-
-# PIL para imágenes
+import json
+import re
 from PIL import Image
+import io
+import base64
+import logging
+from typing import Optional, Dict, List, Tuple
+
+# Fix para compatibilidad Python 3.10+ con wordpress_xmlrpc
+import collections
+import collections.abc
+if not hasattr(collections, 'Iterable'):
+    collections.Iterable = collections.abc.Iterable
+
+# Import opcional de OpenAI (solo para transcripción de audio)
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    openai = None
+    OPENAI_AVAILABLE = False
+    
+from groq import Groq
+import requests
+from telegram import Update, Message, Bot
+from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler
+import wordpress_xmlrpc
+from wordpress_xmlrpc import Client
+from wordpress_xmlrpc.methods import posts, media
+from wordpress_xmlrpc.compat import xmlrpc_client
+from flask import Flask, request, jsonify
 
 # Configuración de logging
 logging.basicConfig(
@@ -52,193 +60,170 @@ logger = logging.getLogger(__name__)
 
 class AutomacionPeriodisticaV1:
     def __init__(self):
-        """Inicializar bot de automatización periodística"""
-        logger.info("🚀 Inicializando Bot de Automatización Periodística v1.1.1")
+        """Inicializar sistema completo de automatización periodística"""
+        logger.info("🚀 Inicializando Sistema de Automatización Periodística v1.1.2")
         
-        # Configuración de imagen
+        # Configuraciones básicas
+        self.MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
+        self.SUPPORTED_FORMATS = ['jpg', 'jpeg', 'png', 'webp']
         self.TARGET_WIDTH = 1200
         self.TARGET_HEIGHT = 630
         self.IMAGE_QUALITY = 85
         
-        # Estados
-        self._bot_initialized = False
-        self._groq_initialized = False
-        self._wordpress_initialized = False
+        # Estadísticas
+        self.stats = {
+            'articulos_creados': 0,
+            'imagenes_procesadas': 0,
+            'errores': 0,
+            'inicio_sistema': datetime.now().isoformat()
+        }
         
-        # Inicializar servicios
-        self._initialize_telegram()
-        self._initialize_groq()
-        self._initialize_wordpress()
+        # Configuración de servicios
+        self._setup_services()
         
-    def _initialize_telegram(self):
-        """Inicializar cliente de Telegram"""
+        logger.info("✅ Sistema inicializado correctamente")
+
+    def _setup_services(self):
+        """Configurar todos los servicios necesarios"""
         try:
-            telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
-            if not telegram_token:
-                raise ValueError("TELEGRAM_BOT_TOKEN no configurado")
-            
-            self.bot = Bot(token=telegram_token)
-            self.application = Application.builder().token(telegram_token).build()
-            
-            # Configurar handlers
-            self.application.add_handler(
-                MessageHandler(filters.PHOTO, self.handle_message_with_photo)
-            )
-            
-            self._bot_initialized = True
-            logger.info("✅ Bot de Telegram inicializado")
-            
-        except Exception as e:
-            logger.error(f"❌ Error inicializando Telegram: {e}")
-            raise
-    
-    def _initialize_groq(self):
-        """Inicializar cliente de Groq"""
-        try:
+            # Configurar Groq
             groq_api_key = os.getenv('GROQ_API_KEY')
             if not groq_api_key:
-                raise ValueError("GROQ_API_KEY no configurado")
+                raise ValueError("❌ GROQ_API_KEY no configurada")
             
             self.groq_client = Groq(api_key=groq_api_key)
-            self._groq_initialized = True
-            logger.info("✅ Cliente Groq inicializado")
+            logger.info("✅ Groq configurado")
             
-        except Exception as e:
-            logger.error(f"❌ Error inicializando Groq: {e}")
-            raise
-    
-    def _initialize_wordpress(self):
-        """Inicializar cliente de WordPress"""
-        try:
+            # Configurar WordPress
             wp_url = os.getenv('WORDPRESS_URL')
-            wp_username = os.getenv('WORDPRESS_USERNAME') 
+            wp_username = os.getenv('WORDPRESS_USERNAME')
             wp_password = os.getenv('WORDPRESS_PASSWORD')
             
             if not all([wp_url, wp_username, wp_password]):
-                raise ValueError("Credenciales de WordPress incompletas")
+                raise ValueError("❌ Credenciales de WordPress incompletas")
             
             xmlrpc_url = f"{wp_url.rstrip('/')}/xmlrpc.php"
             self.wordpress_client = Client(xmlrpc_url, wp_username, wp_password)
+            logger.info("✅ WordPress configurado")
             
-            self._wordpress_initialized = True
-            logger.info("✅ Cliente WordPress inicializado")
+            # Configurar Telegram
+            telegram_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            if not telegram_token:
+                raise ValueError("❌ TELEGRAM_BOT_TOKEN no configurado")
+            
+            self.bot = Bot(token=telegram_token)
+            logger.info("✅ Telegram configurado")
             
         except Exception as e:
-            logger.error(f"❌ Error inicializando WordPress: {e}")
+            logger.error(f"❌ Error configurando servicios: {e}")
             raise
 
-    def _extract_keyword_from_message(self, text: str) -> str:
-        """Extrae palabra clave del texto enviado"""
+    def _extraer_palabra_clave(self, texto: str) -> str:
+        """Extraer palabra clave principal del texto"""
         try:
             # Limpiar texto
-            clean_text = text.strip()
-            
-            # Si es muy corto, usar como está
-            if len(clean_text.split()) <= 3:
-                return clean_text.lower()
-            
-            # Extraer primeras 2-3 palabras más relevantes
-            words = clean_text.split()
+            texto_limpio = re.sub(r'[^\w\s]', ' ', texto.lower())
+            palabras = texto_limpio.split()
             
             # Filtrar palabras muy comunes
-            stop_words = ['el', 'la', 'los', 'las', 'de', 'del', 'a', 'en', 'con', 'por', 'para', 'es', 'son', 'un', 'una']
-            filtered_words = [w for w in words[:5] if w.lower() not in stop_words]
+            stop_words = ['el', 'la', 'los', 'las', 'de', 'del', 'a', 'en', 'con', 'por', 'para', 'es', 'son', 'un', 'una', 'que', 'se', 'no', 'te', 'le', 'da', 'su', 'por', 'son', 'con', 'no', 'te', 'lo', 'al', 'ya', 'me', 'si', 'al']
+            palabras_filtradas = [p for p in palabras if len(p) > 2 and p not in stop_words]
             
-            # Tomar primeras 2-3 palabras relevantes
-            keyword_parts = filtered_words[:3] if len(filtered_words) >= 3 else words[:3]
-            keyword = ' '.join(keyword_parts).lower()
+            # Tomar las primeras 2-3 palabras más relevantes
+            if len(palabras_filtradas) >= 2:
+                keyword = ' '.join(palabras_filtradas[:2])
+            else:
+                keyword = ' '.join(palabras[:2]) if len(palabras) >= 2 else palabras[0] if palabras else 'actualidad'
             
             logger.info(f"🎯 Palabra clave extraída: '{keyword}'")
             return keyword
             
         except Exception as e:
-            logger.warning(f"⚠️ Error extrayendo keyword: {e}")
+            logger.warning(f"⚠️ Error extrayendo palabra clave: {e}")
             return "actualidad"
 
-    def _generate_ai_article_prompt(self, user_text: str, keyword: str) -> str:
-        """Genera prompt optimizado para IA como experto en redacción SEO"""
+    def _generar_prompt_profesional(self, texto_usuario: str, palabra_clave: str) -> str:
+        """Genera prompt optimizado para contenido periodístico profesional"""
         
-        prompt = f"""Sos un EXPERTO EN REDACCIÓN SEO, especializado en PERIODISMO y NEUROMARKETING. Creás artículos informativos en español de Argentina que rankean #1 en Google.
+        prompt = f"""Sos un PERIODISTA PROFESIONAL especializado en redacción SEO para medios digitales argentinos. Creás artículos informativos, serios y bien estructurados.
 
-INFORMACIÓN BASE RECIBIDA:
-{user_text}
+INFORMACIÓN RECIBIDA:
+{texto_usuario}
 
-PALABRA CLAVE OBJETIVO: "{keyword}"
+PALABRA CLAVE OBJETIVO: "{palabra_clave}"
 
-INSTRUCCIONES CRÍTICAS:
+INSTRUCCIONES ESPECÍFICAS:
 
 1. **TÍTULO H1** (30-70 caracteres):
-   - DEBE comenzar con la palabra clave "{keyword}"
-   - Específico y descriptivo (no genérico)
-   - Ejemplo: "{keyword}: guía completa 2025" o "{keyword} en Argentina: todo lo que necesitás saber"
+   - DEBE comenzar con "{palabra_clave}"
+   - Profesional, específico, periodístico
+   - Sin emojis, estilo serio de noticias
+   - Ejemplo: "{palabra_clave}: nuevas medidas entran en vigencia en Argentina"
 
 2. **META DESCRIPCIÓN** (EXACTAMENTE 135 caracteres):
-   - DEBE incluir la palabra clave "{keyword}"
-   - Call-to-action persuasivo
-   - Contar caracteres exactos
+   - Incluir "{palabra_clave}"
+   - Tono informativo y profesional
+   - Contar caracteres precisos
 
-3. **SLUG SEO**:
-   - Solo la palabra clave con guiones: "{keyword.replace(' ', '-')}"
+3. **SLUG**: "{palabra_clave.replace(' ', '-')}"
 
-4. **CONTENIDO MÍNIMO 1000 PALABRAS**:
+4. **CONTENIDO** (600-1000 palabras):
    - Expandir la información base con investigación periodística
-   - Incluir contexto argentino
-   - Datos, estadísticas, ejemplos locales
-   - Múltiples párrafos informativos
+   - Contexto argentino relevante
+   - Datos específicos, fechas, cifras
+   - Lenguaje natural, no robótico
+   - Sin frases como "En conclusión" o similares
 
-5. **ESTRUCTURA H2, H3, H4**:
-   - H2: Intenciones de búsqueda relacionadas a "{keyword}"
-   - H3: Subtemas específicos
-   - H4: Detalles técnicos
-   - Cada título DEBE incluir variaciones de "{keyword}"
+5. **ESTRUCTURA PROFESIONAL**:
+   - H2: Contexto y antecedentes
+   - H2: Detalles específicos sobre {palabra_clave}
+   - H2: Impacto y consecuencias
+   - H3: Subtemas relevantes
+   - Cada título debe ser descriptivo y específico
 
-6. **ENLACES INTERNOS**:
-   - Agregar 2-3 enlaces a categorías internas como:
+6. **ENLACES INTERNOS** (2-3):
    - <a href="/categoria/actualidad">actualidad</a>
    - <a href="/categoria/economia">economía</a>
    - <a href="/categoria/politica">política</a>
-   - Integrarlos naturalmente en el texto
+   - Integrarlos naturalmente
 
-7. **OPTIMIZACIÓN SEO**:
-   - Palabra clave en primer párrafo
-   - Densidad de palabra clave 1-2%
-   - Sinónimos y variaciones
-   - Lenguaje natural argentino
+7. **OPTIMIZACIÓN**:
+   - "{palabra_clave}" en primer párrafo
+   - Variaciones naturales de la palabra clave
+   - Lenguaje periodístico argentino
+   - Sin sonar artificial o generado por IA
 
-8. **TAGS INTELIGENTES**:
-   - Palabra clave principal
-   - 3-4 términos relacionados
-   - Sin repetir categoría
+8. **TAGS**: Incluir palabra clave + 3-4 términos relacionados relevantes
 
-RESPONDE SOLO EN FORMATO JSON VÁLIDO:
+RESPONDER SOLO EN JSON VÁLIDO:
 
 {{
-    "titulo": "TÍTULO H1 CON PALABRA CLAVE AL INICIO",
+    "titulo": "TÍTULO PROFESIONAL COMENZANDO CON PALABRA CLAVE",
     "metadescripcion": "EXACTAMENTE 135 CARACTERES CON PALABRA CLAVE",
-    "palabra_clave": "{keyword}",
-    "slug": "{keyword.replace(' ', '-')}",
-    "contenido_html": "ARTÍCULO COMPLETO EN HTML CON MÍNIMO 1000 PALABRAS",
-    "tags": ["palabra_clave", "tag2", "tag3", "tag4"],
-    "categoria": "CATEGORÍA_PRINCIPAL"
+    "palabra_clave": "{palabra_clave}",
+    "slug": "{palabra_clave.replace(' ', '-')}",
+    "contenido_html": "ARTÍCULO COMPLETO EN HTML PROFESIONAL",
+    "tags": ["{palabra_clave}", "tag2", "tag3", "tag4"],
+    "categoria": "CATEGORÍA_APROPIADA"
 }}
 
-IMPORTANTE: El contenido debe ser ÚTIL, PROFUNDO y ORIGINAL. No copies la información base, expandila con valor periodístico real."""
+IMPORTANTE: El contenido debe ser PROFESIONAL, INFORMATIVO y de CALIDAD PERIODÍSTICA. Expandir la información base con valor real."""
 
         return prompt
 
-    async def generate_article_with_ai(self, user_text: str, keyword: str) -> Dict:
-        """Genera artículo usando IA con prompt optimizado para SEO"""
+    async def generar_articulo_ia(self, texto_usuario: str, palabra_clave: str) -> Dict:
+        """Generar artículo usando IA con prompt profesional"""
         try:
-            prompt = self._generate_ai_article_prompt(user_text, keyword)
+            prompt = self._generar_prompt_profesional(texto_usuario, palabra_clave)
             
-            logger.info("🤖 Generando artículo SEO con IA...")
+            logger.info("🤖 Generando artículo profesional con IA...")
             
             # Llamada a Groq
             chat_completion = self.groq_client.chat.completions.create(
                 messages=[
                     {
                         "role": "system",
-                        "content": "Sos un experto en redacción SEO y periodismo argentino. Respondés SOLO en JSON válido."
+                        "content": "Sos un periodista profesional argentino especializado en SEO. Respondés SOLO en JSON válido."
                     },
                     {
                         "role": "user", 
@@ -262,149 +247,130 @@ IMPORTANTE: El contenido debe ser ÚTIL, PROFUNDO y ORIGINAL. No copies la infor
             try:
                 article_data = json.loads(content)
                 
-                # Validaciones SEO críticas
-                if not article_data.get('titulo', '').lower().startswith(keyword.lower()):
+                # Validaciones críticas
+                titulo = article_data.get('titulo', '')
+                if not titulo.lower().startswith(palabra_clave.lower()):
                     logger.warning(f"⚠️ Título no comienza con palabra clave")
                 
                 meta_desc = article_data.get('metadescripcion', '')
                 if len(meta_desc) != 135:
-                    logger.warning(f"⚠️ Meta descripción no tiene 135 chars: {len(meta_desc)}")
+                    logger.warning(f"⚠️ Meta descripción: {len(meta_desc)} chars (debe ser 135)")
                 
-                if keyword.lower() not in meta_desc.lower():
-                    logger.warning(f"⚠️ Meta descripción no contiene palabra clave")
-                
-                # Validar longitud de contenido
                 contenido = article_data.get('contenido_html', '')
                 word_count = len(contenido.split())
                 if word_count < 300:
-                    logger.warning(f"⚠️ Contenido muy corto: {word_count} palabras")
+                    logger.warning(f"⚠️ Contenido corto: {word_count} palabras")
                 
-                logger.info("✅ Artículo SEO PERFECTO generado")
+                logger.info("✅ Artículo profesional generado correctamente")
                 return article_data
                 
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Error parseando JSON de IA: {e}")
-                logger.error(f"Contenido problemático: {content[:200]}...")
-                return self._generate_fallback_article(user_text, keyword)
+                return self._generar_articulo_respaldo(texto_usuario, palabra_clave)
                 
         except Exception as e:
             logger.error(f"❌ Error generando artículo con IA: {e}")
-            return self._generate_fallback_article(user_text, keyword)
+            return self._generar_articulo_respaldo(texto_usuario, palabra_clave)
 
-    def _generate_fallback_article(self, user_text: str, keyword: str) -> Dict:
-        """Genera artículo de emergencia cuando falla la IA"""
+    def _generar_articulo_respaldo(self, texto_usuario: str, palabra_clave: str) -> Dict:
+        """Genera artículo de respaldo si falla la IA"""
         logger.info("🔄 Generando artículo de respaldo...")
         
-        # Título específico con palabra clave
-        titulo = f"{keyword.title()}: Información Completa y Actualizada 2025"
+        titulo = f"{palabra_clave.title()}: información actualizada sobre la situación en Argentina"
         
         # Meta descripción exacta de 135 caracteres
-        meta_desc = f"Descubrí todo sobre {keyword} en Argentina. Información completa, actualizada y detallada. ¡Conocé todos los detalles importantes!"
-        
-        # Asegurar que tenga exactamente 135 caracteres
-        if len(meta_desc) > 135:
-            meta_desc = meta_desc[:132] + "..."
-        elif len(meta_desc) < 135:
-            meta_desc = meta_desc.ljust(135, " ")[:135]
+        meta_base = f"Conocé todos los detalles sobre {palabra_clave} en Argentina. Información actualizada y completa para mantenerte informado."
+        if len(meta_base) > 135:
+            meta_desc = meta_base[:132] + "..."
+        else:
+            meta_desc = meta_base.ljust(135)[:135]
         
         return {
             "titulo": titulo,
             "metadescripcion": meta_desc,
-            "palabra_clave": keyword,
-            "slug": keyword.replace(' ', '-'),
+            "palabra_clave": palabra_clave,
+            "slug": palabra_clave.replace(' ', '-'),
             "contenido_html": f"""
-<p>En esta nota te contamos todo lo que necesitás saber sobre <strong>{keyword}</strong>, un tema de gran relevancia en la actualidad argentina.</p>
+<p>La situación actual de <strong>{palabra_clave}</strong> representa un tema de gran relevancia para Argentina. Te contamos todos los detalles.</p>
 
-<h2>¿Qué es {keyword.title()} en Argentina?</h2>
-<p>{user_text}</p>
+<h2>Contexto sobre {palabra_clave.title()}</h2>
+<p>{texto_usuario}</p>
 
-<p>La situación actual de <strong>{keyword}</strong> representa un punto de inflexión importante para nuestro país. Los especialistas coinciden en que es fundamental mantenerse informado sobre estos desarrollos.</p>
+<p>Es importante mantenerse informado sobre los desarrollos relacionados con <strong>{palabra_clave}</strong>, ya que pueden tener impacto directo en la vida cotidiana de los argentinos.</p>
 
-<h2>Aspectos Clave de {keyword.title()}</h2>
-<p>Para comprender completamente el impacto de <strong>{keyword}</strong>, es necesario analizar varios factores que influyen en la situación actual.</p>
+<h2>Detalles específicos sobre {palabra_clave.title()}</h2>
+<p>Los especialistas señalan que <strong>{palabra_clave}</strong> requiere atención especial debido a las circunstancias actuales del país.</p>
 
-<h3>Contexto Nacional</h3>
-<p>En Argentina, <strong>{keyword}</strong> ha cobrado especial relevancia debido a las circunstancias económicas y sociales actuales. Los expertos señalan que este tema afecta directamente a millones de ciudadanos.</p>
+<h3>Impacto en la economía nacional</h3>
+<p>El tema de <strong>{palabra_clave}</strong> tiene repercusiones importantes en diferentes sectores económicos del país.</p>
 
-<h3>Implicaciones Económicas</h3>
-<p>El impacto económico de <strong>{keyword}</strong> se refleja en múltiples sectores de la economía nacional. Es importante considerar tanto los efectos a corto como a largo plazo.</p>
+<h3>Perspectivas a futuro</h3>
+<p>Los análisis más recientes indican que <strong>{palabra_clave}</strong> continuará siendo monitoreado de cerca por las autoridades competentes.</p>
 
-<h2>Perspectivas Futuras sobre {keyword.title()}</h2>
-<p>Los análisis más recientes sugieren que <strong>{keyword}</strong> continuará siendo un tema central en los próximos meses. Las autoridades han expresado su compromiso de monitorear la situación de cerca.</p>
+<h2>Consecuencias para los ciudadanos</h2>
+<p>Es fundamental que los argentinos se mantengan al tanto de las novedades relacionadas con <strong>{palabra_clave}</strong> para tomar decisiones informadas.</p>
 
-<h3>Recomendaciones para Ciudadanos</h3>
-<p>Ante la evolución de <strong>{keyword}</strong>, los especialistas recomiendan mantenerse informado a través de fuentes oficiales y confiables.</p>
-
-<h2>Conclusiones sobre {keyword.title()}</h2>
-<p>En resumen, <strong>{keyword}</strong> representa un tema de importancia nacional que requiere atención constante. La información actualizada es clave para tomar decisiones informadas.</p>
-
-<p>Para más información sobre temas relacionados, visitá nuestra sección de <a href="/categoria/actualidad">actualidad</a> y mantenete al día con las últimas noticias de <a href="/categoria/economia">economía</a> argentina.</p>
+<p>Para más información sobre temas relacionados, consultá nuestra sección de <a href="/categoria/actualidad">actualidad</a> y seguí las últimas noticias en <a href="/categoria/economia">economía</a>.</p>
 """,
-            "tags": [keyword, "actualidad", "argentina", "información"],
+            "tags": [palabra_clave, "actualidad", "argentina", "información"],
             "categoria": "Actualidad"
         }
 
-    async def resize_and_optimize_image(self, image_data: bytes) -> bytes:
-        """Redimensiona y optimiza imagen para web"""
+    async def optimizar_imagen(self, data_imagen: bytes) -> bytes:
+        """Optimizar imagen para web"""
         try:
-            # Abrir imagen
-            with Image.open(io.BytesIO(image_data)) as img:
+            with Image.open(io.BytesIO(data_imagen)) as img:
                 # Convertir a RGB si es necesario
                 if img.mode in ('RGBA', 'P', 'LA'):
                     img = img.convert('RGB')
                 
-                # Redimensionar si es necesario
+                # Redimensionar manteniendo proporción
                 if img.width > self.TARGET_WIDTH or img.height > self.TARGET_HEIGHT:
-                    # Mantener proporción
                     img.thumbnail((self.TARGET_WIDTH, self.TARGET_HEIGHT), Image.Resampling.LANCZOS)
                     logger.info(f"🖼️ Imagen redimensionada a {img.width}x{img.height}")
                 
                 # Guardar optimizada
                 output = io.BytesIO()
                 img.save(output, format='JPEG', quality=self.IMAGE_QUALITY, optimize=True)
-                optimized_data = output.getvalue()
-                
-                logger.info(f"✅ Imagen optimizada: {len(image_data)} → {len(optimized_data)} bytes")
-                return optimized_data
+                return output.getvalue()
                 
         except Exception as e:
-            logger.warning(f"⚠️ Error optimizando imagen: {e}, usando original")
-            return image_data
+            logger.warning(f"⚠️ Error optimizando imagen: {e}")
+            return data_imagen
 
-    async def upload_image_to_wordpress(self, image_data: bytes, filename: str, alt_text: str = "", title: str = "") -> Optional[int]:
-        """Sube imagen a WordPress y retorna attachment_id"""
+    async def subir_imagen_wordpress(self, data_imagen: bytes, nombre_archivo: str, 
+                                    alt_text: str = "", titulo: str = "") -> Optional[int]:
+        """Subir imagen a WordPress con título y alt text configurados"""
         try:
             # Optimizar imagen
-            optimized_data = await self.resize_and_optimize_image(image_data)
+            imagen_optimizada = await self.optimizar_imagen(data_imagen)
             
-            # Preparar datos para upload
-            data = {
-                'name': filename,
+            # Datos para upload
+            upload_data = {
+                'name': nombre_archivo,
                 'type': 'image/jpeg',
-                'bits': xmlrpc_client.Binary(optimized_data),
+                'bits': xmlrpc_client.Binary(imagen_optimizada),
                 'overwrite': True
             }
             
-            logger.info(f"📤 Subiendo imagen a WordPress: {filename}")
+            logger.info(f"📤 Subiendo imagen: {nombre_archivo}")
             
             # Subir imagen
-            response = self.wordpress_client.call(media.UploadFile(data))
+            respuesta = self.wordpress_client.call(media.UploadFile(upload_data))
             
-            if response and 'id' in response:
-                attachment_id = response['id']
-                logger.info(f"✅ Imagen subida exitosamente - ID: {attachment_id}")
+            if respuesta and 'id' in respuesta:
+                attachment_id = respuesta['id']
+                logger.info(f"✅ Imagen subida - ID: {attachment_id}")
                 
-                # Configurar título y alt text de la imagen
+                # Configurar título y alt text
                 try:
-                    # Actualizar metadatos de la imagen
-                    from wordpress_xmlrpc.methods import posts as wp_posts
+                    # Obtener post de la imagen
+                    attachment_post = self.wordpress_client.call(posts.GetPost(attachment_id))
                     
-                    # Obtener post de attachment
-                    attachment_post = self.wordpress_client.call(wp_posts.GetPost(attachment_id))
-                    
-                    # Actualizar título y alt text
-                    if title:
-                        attachment_post.title = title
+                    # Configurar título
+                    if titulo:
+                        attachment_post.title = titulo
+                        logger.info(f"🏷️ Título configurado: '{titulo}'")
                     
                     # Configurar alt text via custom fields
                     custom_fields = attachment_post.custom_fields or []
@@ -418,245 +384,335 @@ IMPORTANTE: El contenido debe ser ÚTIL, PROFUNDO y ORIGINAL. No copies la infor
                             'key': '_wp_attachment_image_alt',
                             'value': alt_text
                         })
+                        logger.info(f"🏷️ Alt text configurado: '{alt_text}'")
                     
                     attachment_post.custom_fields = custom_fields
                     
-                    # Actualizar attachment
-                    self.wordpress_client.call(wp_posts.EditPost(attachment_id, attachment_post))
-                    
-                    logger.info(f"✅ Imagen configurada - Título: '{title}', Alt: '{alt_text}'")
+                    # Actualizar imagen
+                    self.wordpress_client.call(posts.EditPost(attachment_id, attachment_post))
+                    logger.info("✅ Metadatos de imagen actualizados")
                     
                 except Exception as e:
-                    logger.warning(f"⚠️ Error configurando metadatos de imagen: {e}")
+                    logger.warning(f"⚠️ Error configurando metadatos: {e}")
                 
                 return attachment_id
             else:
-                logger.error(f"❌ Respuesta inválida al subir imagen: {response}")
+                logger.error(f"❌ Error en respuesta de upload: {respuesta}")
                 return None
                 
         except Exception as e:
             logger.error(f"❌ Error subiendo imagen: {e}")
             return None
 
-    async def publish_to_wordpress(self, article_data: Dict, attachment_id: Optional[int] = None) -> Tuple[Optional[int], Optional[str]]:
-        """Publica artículo completo en WordPress"""
+    async def publicar_wordpress(self, datos_articulo: Dict, attachment_id: Optional[int] = None) -> Tuple[Optional[int], Optional[str]]:
+        """Publicar artículo en WordPress con SEO completo"""
         try:
             from wordpress_xmlrpc import WordPressPost
             
             # Crear post
             post = WordPressPost()
-            post.title = article_data['titulo']
-            post.content = article_data['contenido_html']
-            post.excerpt = article_data['metadescripcion']
-            post.slug = article_data['slug']
+            post.title = datos_articulo['titulo']
+            post.content = datos_articulo['contenido_html']
+            post.excerpt = datos_articulo['metadescripcion']
+            post.slug = datos_articulo['slug']
             post.post_status = 'publish'
             
-            # Configurar SEO meta fields (Yoast)
+            # Configurar campos SEO de Yoast
             custom_fields = []
             
-            # Meta descripción Yoast
+            # Meta descripción
             custom_fields.append({
                 'key': '_yoast_wpseo_metadesc',
-                'value': article_data['metadescripcion']
+                'value': datos_articulo['metadescripcion']
             })
             
-            # Palabra clave focus Yoast
+            # Palabra clave focus
             custom_fields.append({
                 'key': '_yoast_wpseo_focuskw',
-                'value': article_data['palabra_clave']
+                'value': datos_articulo['palabra_clave']
             })
             
-            # Título SEO Yoast (opcional, usa título del post por defecto)
+            # Título SEO
             custom_fields.append({
                 'key': '_yoast_wpseo_title',
-                'value': article_data['titulo']
+                'value': datos_articulo['titulo']
             })
             
             post.custom_fields = custom_fields
             
             # Configurar taxonomías
             try:
-                # Categoría
-                categoria = article_data.get('categoria', 'Actualidad')
-                post.terms_names = {
-                    'category': [categoria]
-                }
+                categoria = datos_articulo.get('categoria', 'Actualidad')
+                post.terms_names = {'category': [categoria]}
                 
-                # Tags
-                tags = article_data.get('tags', [])
+                tags = datos_articulo.get('tags', [])
                 if tags:
                     post.terms_names['post_tag'] = tags
                     
                 logger.info(f"📂 Categoría: {categoria}, Tags: {tags}")
                 
             except Exception as e:
-                logger.warning(f"⚠️ Error configurando taxonomías: {e}")
+                logger.warning(f"⚠️ Error configurando categoría: {e}")
             
-            # Configurar imagen destacada
+            # Imagen destacada
             if attachment_id:
-                try:
-                    post.thumbnail = attachment_id
-                    logger.info(f"🖼️ Imagen destacada configurada: ID {attachment_id}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Error configurando imagen destacada: {e}")
+                post.thumbnail = attachment_id
+                logger.info(f"🖼️ Imagen destacada: ID {attachment_id}")
             
-            # Publicar post
-            logger.info("📝 Publicando artículo en WordPress...")
+            # Publicar
+            logger.info("📝 Publicando artículo...")
             post_id = self.wordpress_client.call(posts.NewPost(post))
             
             if post_id:
-                logger.info(f"✅ Artículo publicado exitosamente - ID: {post_id}")
+                logger.info(f"✅ Artículo publicado - ID: {post_id}")
+                self.stats['articulos_creados'] += 1
                 return post_id, post.title
             else:
                 logger.error("❌ Error: post_id es None")
                 return None, None
                 
         except Exception as e:
-            logger.error(f"❌ Error publicando en WordPress: {e}")
+            logger.error(f"❌ Error crítico publicando en WordPress: {e}")
+            self.stats['errores'] += 1
             return None, None
 
-    async def handle_message_with_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Procesa mensaje con foto para generar artículo"""
+    async def handle_message_with_photo(self, update: Update, context):
+        """Manejar mensaje con foto - LÓGICA EXACTA DE v1.1.0"""
         try:
-            logger.info("📸 Recibido mensaje con foto")
+            logger.info("📸 Procesando mensaje con foto")
             
-            # Obtener información de la foto
-            photo = update.message.photo[-1]  # Mejor calidad
-            user_text = update.message.caption or ""
+            # Obtener datos
+            photo = update.message.photo[-1]
+            texto_usuario = update.message.caption or ""
             
-            if not user_text.strip():
-                await update.message.reply_text("❌ Por favor incluí texto con la imagen para generar el artículo.")
+            if not texto_usuario.strip():
+                await self.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="❌ Incluí texto con la imagen para generar el artículo."
+                )
                 return
             
-            logger.info(f"📝 Texto recibido: {user_text}")
+            logger.info(f"📝 Texto: {texto_usuario}")
             
             # Extraer palabra clave
-            keyword = self._extract_keyword_from_message(user_text)
+            palabra_clave = self._extraer_palabra_clave(texto_usuario)
             
-            # Obtener archivo de foto
+            # Descargar imagen
             file = await self.bot.get_file(photo.file_id)
-            image_data = await file.download_as_bytearray()
+            imagen_data = await file.download_as_bytearray()
             
-            # Generar nombre de archivo
+            # Generar nombre con timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"imagen_{timestamp}.jpg"
+            nombre_archivo = f"imagen_{timestamp}.jpg"
             
-            # Configurar título y alt text con la palabra clave
-            image_title = keyword.title()
-            image_alt = keyword
+            # Configurar título y alt text con palabra clave
+            titulo_imagen = palabra_clave.title()
+            alt_text_imagen = palabra_clave
             
-            logger.info(f"🖼️ Procesando imagen: {filename}")
-            logger.info(f"🏷️ Título imagen: '{image_title}', Alt: '{image_alt}'")
+            logger.info(f"🖼️ Configurando imagen: título='{titulo_imagen}', alt='{alt_text_imagen}'")
             
-            # Subir imagen a WordPress
-            attachment_id = await self.upload_image_to_wordpress(
-                bytes(image_data), 
-                filename, 
-                alt_text=image_alt,
-                title=image_title
+            # Subir imagen con metadatos
+            attachment_id = await self.subir_imagen_wordpress(
+                bytes(imagen_data), 
+                nombre_archivo,
+                alt_text=alt_text_imagen,
+                titulo=titulo_imagen
             )
             
             if not attachment_id:
-                logger.error("❌ Error subiendo imagen")
-                await update.message.reply_text("❌ Error subiendo imagen a WordPress")
+                await self.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="❌ Error subiendo imagen"
+                )
                 return
             
-            # Generar artículo con IA
-            logger.info("🤖 Generando artículo con IA...")
-            article_data = await self.generate_article_with_ai(user_text, keyword)
+            # Generar artículo
+            logger.info("🤖 Generando artículo profesional...")
+            datos_articulo = await self.generar_articulo_ia(texto_usuario, palabra_clave)
             
-            if not article_data:
-                logger.error("❌ Error generando artículo")
-                await update.message.reply_text("❌ Error generando artículo")
+            if not datos_articulo:
+                await self.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="❌ Error generando artículo"
+                )
                 return
             
             logger.info("✅ Artículo SEO FINAL PERFECTO generado")
             
-            # Publicar en WordPress
+            # Publicar
             logger.info("🚀 Iniciando publicación en WordPress...")
-            post_id, post_title = await self.publish_to_wordpress(article_data, attachment_id)
+            post_id, titulo_post = await self.publicar_wordpress(datos_articulo, attachment_id)
             
             if post_id:
-                logger.info(f"✅ ¡PUBLICACIÓN EXITOSA! ID: {post_id}")
-                await update.message.reply_text(
-                    f"✅ ¡Artículo publicado exitosamente!\n\n"
-                    f"📰 **{post_title}**\n"
-                    f"🆔 Post ID: {post_id}\n"
-                    f"🎯 Palabra clave: {keyword}\n"
-                    f"🖼️ Imagen destacada: ✅\n"
-                    f"📊 SEO optimizado: ✅",
-                    parse_mode=ParseMode.MARKDOWN
+                self.stats['imagenes_procesadas'] += 1
+                await self.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"✅ ¡Artículo publicado!\n\n📰 {titulo_post}\n🆔 ID: {post_id}\n🎯 Keyword: {palabra_clave}\n🖼️ Imagen: ✅\n📊 SEO: ✅"
                 )
+                logger.info(f"✅ ÉXITO TOTAL - Post ID: {post_id}")
             else:
-                logger.error("❌ Error publicando artículo")
-                await update.message.reply_text("❌ Error publicando artículo en WordPress")
+                await self.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="❌ Error publicando artículo"
+                )
                 
         except Exception as e:
             logger.error(f"❌ Error procesando imagen: {e}")
-            await update.message.reply_text(f"❌ Error procesando mensaje: {str(e)}")
+            self.stats['errores'] += 1
+            await self.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"❌ Error procesando mensaje: {str(e)}"
+            )
+
+    async def start_command(self, update: Update, context):
+        """Comando /start"""
+        mensaje_bienvenida = """
+🤖 *Bot de Automatización Periodística v1.1.2*
+
+📸 Enviá una imagen con texto y creo automáticamente:
+• ✅ Artículo SEO optimizado
+• ✅ Imagen destacada con alt text
+• ✅ Publicación en WordPress
+• ✅ Configuración Yoast completa
+
+📊 `/stats` - Ver estadísticas
+"""
+        
+        await self.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=mensaje_bienvenida,
+            parse_mode='Markdown'
+        )
+
+    async def stats_command(self, update: Update, context):
+        """Comando /stats"""
+        stats_text = f"""
+📊 *Estadísticas del Sistema v1.1.2*
+
+📰 Artículos creados: {self.stats['articulos_creados']}
+🖼️ Imágenes procesadas: {self.stats['imagenes_procesadas']}
+❌ Errores: {self.stats['errores']}
+🕐 Inicio: {self.stats['inicio_sistema']}
+"""
+        
+        await self.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=stats_text,
+            parse_mode='Markdown'
+        )
+
+    async def handle_text_only_message(self, update: Update, context):
+        """Manejar mensaje solo texto"""
+        await self.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="📸 Enviá una imagen con texto para generar un artículo automáticamente."
+        )
 
 # Configuración Flask
 app = Flask(__name__)
 
-# Instancia global
-automation_bot = None
-
-def initialize_bot():
-    """Inicializar bot si no existe"""
-    global automation_bot
-    if automation_bot is None:
-        automation_bot = AutomacionPeriodisticaV1()
-    return automation_bot
+# Instancia global del sistema
+sistema = AutomacionPeriodisticaV1()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Endpoint para webhook de Telegram"""
+    """Endpoint principal del webhook de Telegram - LÓGICA EXACTA DE v1.1.0"""
     try:
-        bot_instance = initialize_bot()
-        
-        # Procesar update de Telegram
+        # Obtener datos JSON
         json_data = request.get_json()
-        if json_data:
-            update = Update.de_json(json_data, bot_instance.bot)
-            
-            # Ejecutar handler en event loop
+        
+        if not json_data:
+            logger.warning("Webhook recibido sin datos JSON")
+            return jsonify({'error': 'No JSON data received'}), 400
+        
+        # Crear objeto Update de Telegram
+        update = Update.de_json(json_data, sistema.bot)
+        
+        if not update or not update.message:
+            return jsonify({'status': 'no_message'}), 200
+        
+        # Procesar mensaje según tipo
+        if update.message.photo:
+            # Mensaje con foto - usar asyncio para procesamiento
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                loop.run_until_complete(
-                    bot_instance.application.process_update(update)
-                )
+                loop.run_until_complete(sistema.handle_message_with_photo(update, None))
             finally:
                 loop.close()
-            
+                
+        elif update.message.text:
+            # Procesar comandos especiales
+            if update.message.text.startswith('/start'):
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(sistema.start_command(update, None))
+                finally:
+                    loop.close()
+                    
+            elif update.message.text.startswith('/stats'):
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(sistema.stats_command(update, None))
+                finally:
+                    loop.close()
+                    
+            else:
+                # Mensaje normal de texto
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(sistema.handle_text_only_message(update, None))
+                finally:
+                    loop.close()
+        
         return jsonify({'status': 'ok'}), 200
         
     except Exception as e:
-        logger.error(f"❌ Error en webhook: {e}")
+        logger.error(f"Error crítico en webhook: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/health', methods=['GET'])
-def health():
-    """Endpoint de health check"""
-    return jsonify({'status': 'healthy', 'version': 'v1.1.1'}), 200
+@app.route('/health')
+def health_check():
+    """Endpoint de verificación de salud del sistema"""
+    try:
+        # Verificar estado de servicios
+        services_status = {
+            'groq': sistema.groq_client is not None,
+            'wordpress': sistema.wordpress_client is not None,
+            'telegram': sistema.bot is not None
+        }
+        
+        all_services_ok = all(services_status.values())
+        
+        return jsonify({
+            'status': 'healthy' if all_services_ok else 'degraded',
+            'version': 'v1.1.2',
+            'timestamp': datetime.now().isoformat(),
+            'services': services_status,
+            'stats': sistema.stats
+        }), 200 if all_services_ok else 503
+        
+    except Exception as e:
+        logger.error(f"Error en health check: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
+@app.route('/')
+def index():
+    """Página principal básica"""
+    return jsonify({
+        'service': 'Automatización Periodística',
+        'version': 'v1.1.2',
+        'status': 'running',
+        'documentation': '/health para estado del sistema'
+    })
 
 if __name__ == '__main__':
-    logger.info("🚀 Iniciando aplicación...")
-    
-    # Inicializar bot
-    bot_instance = initialize_bot()
-    
-    # Verificar inicialización
-    if not all([
-        bot_instance._bot_initialized,
-        bot_instance._groq_initialized, 
-        bot_instance._wordpress_initialized
-    ]):
-        logger.error("❌ Error en inicialización de servicios")
-        exit(1)
-    
-    logger.info("✅ Todos los servicios inicializados correctamente")
-    
-    # Iniciar servidor Flask
     port = int(os.environ.get('PORT', 5000))
+    logger.info(f"🚀 Iniciando servidor Flask en puerto {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
