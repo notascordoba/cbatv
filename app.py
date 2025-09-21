@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Sistema SEO Profesional para automatización periodística v2.0.4
+Sistema SEO Profesional para automatización periodística v2.0.5
 Bot que convierte crónicas en artículos SEO optimizados para WordPress
 Base sólida sin errores de inicialización + características SEO avanzadas
 
-VERSIÓN: 2.0.4
+VERSIÓN: 2.0.5
 FECHA: 2025-09-21
 CAMBIOS:
 + Obtención automática de categorías de WordPress usando XML-RPC
@@ -17,6 +17,7 @@ CAMBIOS:
 + Optimización de redimensionado a 1200x675px como featured image
 + CORRECCIÓN CRÍTICA: Flujo de generación de artículos mejorado y robusto
 + CORRECCIÓN: Manejo consistente de errores y fallbacks
++ CORRECCIÓN FINAL: Import correcto de wordpress_xmlrpc sin errores
 """
 
 import os
@@ -36,7 +37,6 @@ from typing import Optional, Dict, List, Tuple
 import wordpress_xmlrpc
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import posts, media
-from wordpress_xmlrpc.methods.posts import SetPostThumbnail
 from wordpress_xmlrpc.methods.taxonomies import GetTerms
 
 # Imports de Telegram
@@ -574,7 +574,7 @@ RESPONDE ÚNICAMENTE CON EL JSON, SIN TEXTO ADICIONAL."""
             if image_id and post_id:
                 try:
                     # Configurar imagen destacada usando el ID del attachment
-                    self.wp_client.call(SetPostThumbnail(post_id, image_id))
+                    self.wp_client.call(posts.SetPostThumbnail(post_id, image_id))
                     logger.info(f"✅ Imagen destacada configurada - Post ID: {post_id}, Image ID: {image_id}")
                 except Exception as e:
                     logger.warning(f"⚠️ Error configurando imagen destacada: {e}")
@@ -588,7 +588,7 @@ RESPONDE ÚNICAMENTE CON EL JSON, SIN TEXTO ADICIONAL."""
     
     async def send_welcome_message(self, chat_id: int):
         """Envía mensaje de bienvenida con instrucciones"""
-        welcome_text = f"""🤖 **Bot SEO Periodístico v2.0.4 Activado**
+        welcome_text = f"""🤖 **Bot SEO Periodístico v2.0.5 Activado**
 
 📰 **Funcionalidades:**
 • 📝 **Solo texto** - Artículo SEO de {self.min_word_count}+ palabras
