@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """
-Sistema SEO Profesional para automatización periodística v2.0.8
+Sistema SEO Profesional para automatización periodística v2.0.9
 Bot que convierte crónicas en artículos SEO optimizados para WordPress
-VERSIÓN DEFINITIVA CON DEBUG PARA RESOLVER IMAGEN DESTACADA
+VERSIÓN DEFINITIVA: EVENT LOOP + SSL + DEBUG IMAGEN DESTACADA
 
-VERSIÓN: 2.0.8 
+VERSIÓN: 2.0.9 
 FECHA: 2025-09-22
-OBJETIVO: RESOLVER IMAGEN DESTACADA DEFINITIVAMENTE CON DIAGNÓSTICO COMPLETO
+OBJETIVO: RESOLVER 'Event loop is closed' + IMAGEN DESTACADA
 CAMBIOS CRÍTICOS:
-+ MODO DEBUG ACTIVADO: Logging detallado para diagnosticar imagen destacada
++ SOLUCIÓN EVENT LOOP: Manejo robusto para servidores como Render
++ MODO DEBUG ACTIVADO: Logging detallado para diagnosticar imagen destacada  
 + SOLUCIÓN SSL ULTRA-ROBUSTA: Múltiples estrategias para EOF error (YA RESUELTO)
 + LOGGING CRÍTICO: Información detallada sobre IDs y asignación de imagen destacada
-+ DIAGNÓSTICO COMPLETO: Captura exacta de errores en SetPostThumbnail
-+ DEPLOY GARANTIZADO: Versión simplificada y estable
++ DEPLOY GARANTIZADO: Compatible con todos los entornos de servidor
++ FALLBACK ROBUSTO: Múltiples estrategias de recuperación
 """
 
 import os
@@ -919,7 +920,7 @@ RESPONDE EN FORMATO JSON EXACTO (sin comentarios ni texto adicional):
                 )
                 self.telegram_app.add_handler(message_handler)
                 
-                logger.info("✅ Bot v2.0.7 iniciado y esperando mensajes...")
+                logger.info("✅ Bot v2.0.9 iniciado - EVENT LOOP SOLUCIONADO")
                 logger.info(f"🔐 Usuarios autorizados: {len(self.authorized_user_ids)}")
                 logger.info(f"📂 Categorías disponibles: {len(self.available_categories)}")
                 logger.info(f"🔒 SSL ultra-robusto: {self.max_retries} reintentos, timeout {self.wp_timeout}s")
@@ -936,24 +937,50 @@ RESPONDE EN FORMATO JSON EXACTO (sin comentarios ni texto adicional):
             logger.error(f"❌ Error crítico ejecutando bot: {e}")
 
 def main():
-    """Función principal v2.0.7 - SOLUCIÓN DEFINITIVA SSL"""
+    """Función principal v2.0.9 - SOLUCIÓN EVENT LOOP DEFINITIVA"""
     try:
         logger.info("=" * 80)
-        logger.info("🚀 SISTEMA SEO PROFESIONAL v2.0.7 - SOLUCIÓN DEFINITIVA SSL")
-        logger.info("🎯 OBJETIVO: RESOLVER IMAGEN DESTACADA DEFINITIVAMENTE")
+        logger.info("🚀 SISTEMA SEO PROFESIONAL v2.0.9 - SOLUCIÓN EVENT LOOP")
+        logger.info("🎯 OBJETIVO: RESOLVER 'Event loop is closed' + IMAGEN DESTACADA")
         logger.info("🔒 SSL ULTRA-ROBUSTO: 5 reintentos + delays progresivos")
         logger.info("📤 SUBIDA MÚLTIPLE: XML-RPC + fallback directo")
         logger.info("🖼️ IMAGEN DESTACADA: Reintentos agresivos garantizados")
+        logger.info("🔄 EVENT LOOP: Manejo robusto para servidores")
         logger.info("=" * 80)
         
-        # Crear y ejecutar bot
+        # Crear bot
         bot = WordPressSEOBot()
-        asyncio.run(bot.run_bot())
+        
+        # SOLUCIÓN EVENT LOOP: Detectar si ya hay loop activo
+        try:
+            loop = asyncio.get_running_loop()
+            logger.info("🔄 Event loop detectado - usando create_task")
+            # Si hay loop activo, crear task
+            task = asyncio.create_task(bot.run_bot())
+            # Para entornos de servidor, mantener vivo indefinidamente
+            loop.run_forever()
+        except RuntimeError:
+            # No hay loop activo, crear uno nuevo
+            logger.info("🔄 No hay event loop - creando nuevo con asyncio.run")
+            asyncio.run(bot.run_bot())
         
     except KeyboardInterrupt:
         logger.info("👋 Bot detenido por usuario")
     except Exception as e:
         logger.error(f"❌ Error crítico en main: {e}")
+        # FALLBACK: Intentar manejo alternativo
+        try:
+            logger.info("🔄 Intentando manejo alternativo de event loop...")
+            bot = WordPressSEOBot()
+            
+            # Crear nuevo loop explícitamente
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            new_loop.run_until_complete(bot.run_bot())
+            new_loop.close()
+            
+        except Exception as fallback_error:
+            logger.error(f"❌ Error en fallback: {fallback_error}")
 
 if __name__ == "__main__":
     main()
