@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """
-Sistema SEO Profesional para automatización periodística v2.0.7
+Sistema SEO Profesional para automatización periodística v2.0.8
 Bot que convierte crónicas en artículos SEO optimizados para WordPress
-VERSIÓN ULTRA-SIMPLIFICADA PARA RESOLVER ERROR SSL DEFINITIVAMENTE
+VERSIÓN DEFINITIVA CON DEBUG PARA RESOLVER IMAGEN DESTACADA
 
-VERSIÓN: 2.0.7 
+VERSIÓN: 2.0.8 
 FECHA: 2025-09-22
-OBJETIVO: RESOLVER IMAGEN DESTACADA DEFINITIVAMENTE
+OBJETIVO: RESOLVER IMAGEN DESTACADA DEFINITIVAMENTE CON DIAGNÓSTICO COMPLETO
 CAMBIOS CRÍTICOS:
-+ SOLUCIÓN SSL ULTRA-ROBUSTA: Múltiples estrategias para EOF error
-+ REINTENTOS AGRESIVOS: Hasta 5 intentos con delays diferentes
-+ CONFIGURACIÓN SSL PERMISIVA: Para casos problemáticos
-+ TIMEOUT EXTENDIDOS: 60s para subida de imágenes
-+ FALLBACK CURL: Si falla XML-RPC, usar requests directo
-+ DEPLOY GARANTIZADO: Código simplificado sin dependencias problemáticas
++ MODO DEBUG ACTIVADO: Logging detallado para diagnosticar imagen destacada
++ SOLUCIÓN SSL ULTRA-ROBUSTA: Múltiples estrategias para EOF error (YA RESUELTO)
++ LOGGING CRÍTICO: Información detallada sobre IDs y asignación de imagen destacada
++ DIAGNÓSTICO COMPLETO: Captura exacta de errores en SetPostThumbnail
++ DEPLOY GARANTIZADO: Versión simplificada y estable
 """
 
 import os
@@ -45,9 +44,9 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 # Import de OpenAI
 from openai import AsyncOpenAI
 
-# Configuración de logging
+# Configuración de logging - MODO DEBUG ACTIVADO PARA RESOLVER SSL
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -526,6 +525,8 @@ RESPONDE EN FORMATO JSON EXACTO (sin comentarios ni texto adicional):
         for attempt in range(self.max_retries):
             try:
                 logger.info(f"📤 Subida XML-RPC intento {attempt + 1}/{self.max_retries} (delay: {delays[attempt]}s)...")
+                logger.debug(f"🔍 DEBUG - WP Client timeout: {getattr(self.wp_client, 'timeout', 'N/A')}")
+                logger.debug(f"🔍 DEBUG - Archivo: {filename}, Tamaño imagen: {len(resized_image)} bytes")
                 
                 # Subir a WordPress con timeout extendido
                 response = self.wp_client.call(media.UploadFile(data))
@@ -544,6 +545,9 @@ RESPONDE EN FORMATO JSON EXACTO (sin comentarios ni texto adicional):
                     
             except (ssl.SSLError, ssl.SSLEOFError) as e:
                 logger.warning(f"⚠️ ERROR SSL ESPECÍFICO en intento {attempt + 1}: {str(e)[:150]}...")
+                logger.debug(f"🔍 DEBUG SSL - Error completo: {repr(e)}")
+                logger.debug(f"🔍 DEBUG SSL - Tipo error: {type(e).__name__}")
+                logger.debug(f"🔍 DEBUG SSL - Número intento: {attempt + 1} de {self.max_retries}")
                 logger.info(f"🔄 Este es el error que estamos resolviendo específicamente")
                 
             except (ConnectionError, socket.error) as e:
@@ -677,8 +681,20 @@ RESPONDE EN FORMATO JSON EXACTO (sin comentarios ni texto adicional):
                 return None, None
             
             # CONFIGURAR IMAGEN DESTACADA CON ULTRA-ROBUSTEZ
+            logger.debug(f"🔍 VERIFICANDO CONDICIONES PARA IMAGEN DESTACADA:")
+            logger.debug(f"🔍 image_id: {image_id} (válido: {bool(image_id)})")
+            logger.debug(f"🔍 post_id: {post_id} (válido: {bool(post_id)})")
+            
             if image_id and post_id:
+                logger.info("✅ CONDICIONES CUMPLIDAS - Procediendo a configurar imagen destacada")
                 await self._set_featured_image_ultra_robust(post_id, image_id)
+            else:
+                logger.error("❌ CRÍTICO: CONDICIONES NO CUMPLIDAS - No se puede configurar imagen destacada")
+                logger.error(f"❌ image_id válido: {bool(image_id)} | post_id válido: {bool(post_id)}")
+                if not image_id:
+                    logger.error("❌ PROBLEMA: image_id es None o vacío")
+                if not post_id:
+                    logger.error("❌ PROBLEMA: post_id es None o vacío")
             
             # Construir URL del artículo
             article_url = f"{self.wordpress_url.rstrip('/')}/{post_id}"
@@ -693,8 +709,17 @@ RESPONDE EN FORMATO JSON EXACTO (sin comentarios ni texto adicional):
         """NUEVO v2.0.7: Configura imagen destacada con reintentos ULTRA-ROBUSTOS"""
         
         logger.info(f"🖼️ CONFIGURANDO IMAGEN DESTACADA ULTRA-ROBUSTA")
-        logger.info(f"📝 Post ID: {post_id}")
-        logger.info(f"🖼️ Image ID: {image_id}")
+        logger.debug(f"🔍 DEBUG - Post ID recibido: {post_id} (tipo: {type(post_id)})")
+        logger.debug(f"🔍 DEBUG - Image ID recibido: {image_id} (tipo: {type(image_id)})")
+        logger.debug(f"🔍 DEBUG - WP Client disponible: {self.wp_client is not None}")
+        
+        if not image_id:
+            logger.error("❌ CRÍTICO: image_id es None o vacío - no se puede configurar imagen destacada")
+            return False
+        
+        if not post_id:
+            logger.error("❌ CRÍTICO: post_id es None o vacío - no se puede configurar imagen destacada")
+            return False
         
         # Diferentes delays para imagen destacada
         delays = [2, 5, 8, 12, 20]
@@ -702,19 +727,24 @@ RESPONDE EN FORMATO JSON EXACTO (sin comentarios ni texto adicional):
         for attempt in range(self.max_retries):
             try:
                 logger.info(f"🎯 Configurando imagen destacada (intento {attempt + 1}/{self.max_retries})...")
+                logger.debug(f"🔍 DEBUG - Ejecutando SetPostThumbnail({post_id}, {image_id})")
                 
                 # Llamada para configurar imagen destacada
                 result = self.wp_client.call(posts.SetPostThumbnail(post_id, image_id))
                 
                 logger.info(f"✅ IMAGEN DESTACADA CONFIGURADA EXITOSAMENTE!")
-                logger.info(f"📊 Resultado: {result}")
+                logger.debug(f"🔍 DEBUG - Resultado SetPostThumbnail: {result}")
+                logger.debug(f"🔍 DEBUG - Tipo resultado: {type(result)}")
                 return True
                 
             except (ssl.SSLError, ssl.SSLEOFError) as e:
                 logger.warning(f"⚠️ ERROR SSL configurando imagen destacada (intento {attempt + 1}): {str(e)[:100]}...")
+                logger.debug(f"🔍 DEBUG SSL - Error completo: {repr(e)}")
                 
             except Exception as e:
                 logger.warning(f"⚠️ Error configurando imagen destacada (intento {attempt + 1}): {str(e)[:100]}...")
+                logger.debug(f"🔍 DEBUG - Error completo: {repr(e)}")
+                logger.debug(f"🔍 DEBUG - Tipo error: {type(e).__name__}")
             
             # Delay progresivo
             if attempt < self.max_retries - 1:
@@ -722,8 +752,8 @@ RESPONDE EN FORMATO JSON EXACTO (sin comentarios ni texto adicional):
                 logger.info(f"⏱️ Esperando {delay}s antes del siguiente intento...")
                 await asyncio.sleep(delay)
         
-        logger.warning("⚠️ No se pudo configurar imagen destacada después de todos los reintentos")
-        logger.warning("⚠️ El artículo se publicó correctamente pero sin imagen destacada")
+        logger.error("❌ CRÍTICO: No se pudo configurar imagen destacada después de todos los reintentos")
+        logger.error("❌ CRÍTICO: El artículo se publicó correctamente pero sin imagen destacada")
         return False
 
     def _generate_fallback_article(self, user_text: str) -> Dict:
