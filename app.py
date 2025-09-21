@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Sistema SEO Profesional para automatización periodística v2.0.2
+Sistema SEO Profesional para automatización periodística v2.0.3
 Bot que convierte crónicas en artículos SEO optimizados para WordPress
 Base sólida sin errores de inicialización + características SEO avanzadas
 
-VERSIÓN: 2.0.2
+VERSIÓN: 2.0.3
 FECHA: 2025-09-21
 CAMBIOS:
 + Obtención automática de categorías de WordPress usando XML-RPC
@@ -13,6 +13,8 @@ CAMBIOS:
 + Adaptabilidad multi-sitio para diferentes temáticas
 + Cache de categorías para optimizar rendimiento
 + Fallbacks inteligentes en caso de problemas de conexión
++ NUEVO: Configuración automática de imagen destacada en WordPress
++ NUEVO: Optimización de redimensionado a 1200x675px como featured image
 """
 
 import os
@@ -28,214 +30,201 @@ import base64
 import logging
 from typing import Optional, Dict, List, Tuple
 
-# Fix para compatibilidad Python 3.10+ con wordpress_xmlrpc
-import collections
-import collections.abc
-if not hasattr(collections, 'Iterable'):
-    collections.Iterable = collections.abc.Iterable
-
-# Import opcional de OpenAI (solo para transcripción de audio)
-try:
-    import openai
-    OPENAI_AVAILABLE = True
-except ImportError:
-    openai = None
-    OPENAI_AVAILABLE = False
-    
-from groq import Groq
-import requests
-from telegram import Update, Message, Bot
-from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler
+# Imports específicos de WordPress
 import wordpress_xmlrpc
-from wordpress_xmlrpc import Client
+from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import posts, media
 from wordpress_xmlrpc.methods.taxonomies import GetTerms
-from wordpress_xmlrpc.compat import xmlrpc_client
-from dotenv import load_dotenv
-import time
-from functools import wraps
-from flask import Flask, request, jsonify
-import threading
 
-# Cargar variables de entorno
-load_dotenv()
+# Imports de Telegram
+from telegram import Update, Bot
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# Configuración de logging mejorada
+# Import de OpenAI
+from openai import AsyncOpenAI
+
+# Configuración de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
-class TelegramToWordPressBotSEO:
-    """Bot SEO Profesional con características avanzadas y base estable - v2.0.2"""
+class WordPressSEOBot:
+    """
+    Bot profesional para convertir mensajes de Telegram en artículos SEO optimizados
+    
+    Funcionalidades principales:
+    - Recibe texto/imagen/audio desde Telegram
+    - Genera artículos SEO completos usando IA
+    - Redimensiona imágenes a tamaño óptimo (1200x675px)
+    - Configura automáticamente imagen destacada en WordPress
+    - Obtiene categorías dinámicamente de cada sitio WordPress
+    - Valida categorías antes de publicar (no crea nuevas)
+    - Publica directamente en WordPress con metadatos SEO
+    """
     
     def __init__(self):
-        # Configuraciones desde variables de entorno
-        self.TELEGRAM_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-        self.GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-        self.OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-        self.WORDPRESS_URL = os.getenv('WORDPRESS_URL')
-        self.WORDPRESS_USERNAME = os.getenv('WORDPRESS_USERNAME')
-        self.WORDPRESS_PASSWORD = os.getenv('WORDPRESS_PASSWORD')
+        """Inicializa el bot con configuración desde variables de entorno"""
         
-        # Usuarios autorizados (opcional)
-        authorized_ids = os.getenv('AUTHORIZED_USER_IDS', '')
-        self.AUTHORIZED_USERS = [int(id.strip()) for id in authorized_ids.split(',') if id.strip()]
+        # Tokens y configuración principal
+        self.telegram_token = os.getenv('TELEGRAM_TOKEN')
+        self.openai_api_key = os.getenv('OPENAI_API_KEY')
+        self.wordpress_url = os.getenv('WORDPRESS_URL')
+        self.wordpress_user = os.getenv('WORDPRESS_USER')  
+        self.wordpress_password = os.getenv('WORDPRESS_PASSWORD')
+        
+        # IDs autorizados (convertir de string separado por comas)
+        authorized_ids_str = os.getenv('AUTHORIZED_USER_IDS', '')
+        self.authorized_user_ids = []
+        if authorized_ids_str:
+            try:
+                self.authorized_user_ids = [int(uid.strip()) for uid in authorized_ids_str.split(',') if uid.strip()]
+            except ValueError:
+                logger.warning("❌ Error parseando AUTHORIZED_USER_IDS - se requiere formato: id1,id2,id3")
         
         # Configuración de imagen
         self.TARGET_WIDTH = int(os.getenv('IMAGE_WIDTH', 1200))
         self.TARGET_HEIGHT = int(os.getenv('IMAGE_HEIGHT', 675))
         self.IMAGE_QUALITY = int(os.getenv('IMAGE_QUALITY', 85))
         
-        # Inicializar clientes
-        self.groq_client = None
+        # Configuración de IA
+        self.ai_model = os.getenv('AI_MODEL', 'gpt-4o-mini')
+        self.max_tokens = int(os.getenv('MAX_TOKENS', 4000))
+        
+        # Configuración WordPress
+        self.wp_timeout = int(os.getenv('WP_TIMEOUT', 30))
+        
+        # Configuración de contenido SEO
+        self.min_word_count = int(os.getenv('MIN_WORD_COUNT', 800))
+        self.target_word_count = int(os.getenv('TARGET_WORD_COUNT', 1200))
+        
+        # Clientes (se inicializan después)
+        self.telegram_app = None
         self.openai_client = None
         self.wp_client = None
-        self.bot = None
+        self.wordpress_categories = []  # Cache de categorías disponibles
         
-        # Estadísticas simples
-        self.stats = {
-            'messages_processed': 0,
-            'articles_created': 0,
-            'errors': 0,
-            'start_time': datetime.now()
-        }
+        # Estado
+        self.bot_running = False
         
-        # Cache de categorías existentes de WordPress (NUEVO v2.0.2)
-        self.wordpress_categories = []
-        
-        self._initialize_clients()
-        self._validate_configuration()
+        logger.info("✅ Bot inicializado - aguardando conexiones...")
     
-    def _initialize_clients(self):
-        """Inicializa los clientes de servicios externos"""
+    async def _initialize_clients(self) -> bool:
+        """
+        Inicializa conexiones con APIs externas y obtiene categorías de WordPress
+        NUEVO v2.0.3: Incluye cache de categorías disponibles
+        """
         try:
-            # Cliente Groq (requerido)
-            if self.GROQ_API_KEY:
-                self.groq_client = Groq(api_key=self.GROQ_API_KEY)
-                logger.info("✅ Cliente Groq inicializado")
+            success_count = 0
             
-            # Cliente OpenAI (opcional)
-            if self.OPENAI_API_KEY and OPENAI_AVAILABLE:
-                self.openai_client = openai.OpenAI(api_key=self.OPENAI_API_KEY)
-                logger.info("✅ Cliente OpenAI inicializado")
+            # 1. Cliente de Telegram
+            if self.telegram_token:
+                try:
+                    self.telegram_app = Application.builder().token(self.telegram_token).build()
+                    logger.info("✅ Cliente Telegram conectado")
+                    success_count += 1
+                except Exception as e:
+                    logger.error(f"❌ Error conectando Telegram: {e}")
             
-            # Cliente WordPress (requerido)
-            if all([self.WORDPRESS_URL, self.WORDPRESS_USERNAME, self.WORDPRESS_PASSWORD]):
-                # Asegurar que la URL termine con /xmlrpc.php
-                wp_url = self.WORDPRESS_URL
-                if not wp_url.endswith('/xmlrpc.php'):
-                    wp_url = f"{wp_url.rstrip('/')}/xmlrpc.php"
-                
-                self.wp_client = Client(wp_url, self.WORDPRESS_USERNAME, self.WORDPRESS_PASSWORD)
-                logger.info("✅ Cliente WordPress inicializado")
-                
-                # NUEVO v2.0.2: Obtener categorías existentes de WordPress automáticamente
-                self._fetch_wordpress_categories()
+            # 2. Cliente OpenAI
+            if self.openai_api_key:
+                try:
+                    self.openai_client = AsyncOpenAI(api_key=self.openai_api_key)
+                    logger.info("✅ Cliente OpenAI conectado")
+                    success_count += 1
+                except Exception as e:
+                    logger.error(f"❌ Error conectando OpenAI: {e}")
             
-            # Bot de Telegram (requerido)
-            if self.TELEGRAM_TOKEN:
-                self.bot = Bot(token=self.TELEGRAM_TOKEN)
-                logger.info("✅ Bot de Telegram inicializado")
+            # 3. Cliente WordPress
+            if self.wordpress_url and self.wordpress_user and self.wordpress_password:
+                try:
+                    wp_url = f"{self.wordpress_url.rstrip('/')}/xmlrpc.php"
+                    self.wp_client = Client(wp_url, self.wordpress_user, self.wordpress_password)
+                    
+                    # Probar conexión
+                    test_methods = self.wp_client.call(wordpress_xmlrpc.methods.demo.SayHello())
+                    logger.info("✅ Cliente WordPress conectado")
+                    success_count += 1
+                    
+                    # NUEVO v2.0.3: Obtener categorías disponibles del sitio
+                    await self._fetch_wordpress_categories()
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error conectando WordPress: {e}")
+            
+            # Verificar conexiones mínimas
+            if success_count >= 2:
+                logger.info(f"🚀 Sistema operativo - {success_count}/3 servicios conectados")
+                return True
+            else:
+                logger.error(f"❌ Conexiones insuficientes: {success_count}/3")
+                return False
                 
         except Exception as e:
-            logger.error(f"Error inicializando clientes: {e}")
+            logger.error(f"❌ Error crítico inicializando clientes: {e}")
+            return False
     
-    def _validate_configuration(self):
-        """Valida que las configuraciones críticas estén presentes"""
-        missing_configs = []
-        
-        if not self.TELEGRAM_TOKEN:
-            missing_configs.append("TELEGRAM_BOT_TOKEN")
-        if not self.GROQ_API_KEY:
-            missing_configs.append("GROQ_API_KEY")
-        if not self.WORDPRESS_URL:
-            missing_configs.append("WORDPRESS_URL")
-        if not self.WORDPRESS_USERNAME:
-            missing_configs.append("WORDPRESS_USERNAME")
-        if not self.WORDPRESS_PASSWORD:
-            missing_configs.append("WORDPRESS_PASSWORD")
-        
-        if missing_configs:
-            logger.error(f"❌ Configuraciones faltantes: {', '.join(missing_configs)}")
-            raise ValueError(f"Configuraciones requeridas faltantes: {missing_configs}")
-        
-        logger.info("✅ Configuración validada exitosamente")
-
-    def _fetch_wordpress_categories(self) -> List[str]:
+    async def _fetch_wordpress_categories(self) -> bool:
         """
-        NUEVO v2.0.2: Obtiene las categorías existentes de WordPress usando XML-RPC
-        
-        Esta función permite al bot adaptarse automáticamente a múltiples sitios web
-        con diferentes temáticas sin necesidad de configuración manual.
+        NUEVO v2.0.3: Obtiene categorías disponibles desde WordPress
+        Usa XML-RPC para obtener la lista completa de categorías del sitio
         """
         try:
             if not self.wp_client:
-                logger.warning("Cliente WordPress no disponible para obtener categorías")
-                return []
+                logger.warning("⚠️ Cliente WordPress no disponible para obtener categorías")
+                return False
             
-            # Obtener todas las categorías usando XML-RPC
+            # Obtener categorías usando XML-RPC
             categories = self.wp_client.call(GetTerms('category'))
             
             # Extraer solo los nombres de las categorías
-            category_names = [cat.name for cat in categories if hasattr(cat, 'name')]
+            self.wordpress_categories = [cat.name for cat in categories if cat.name.lower() != 'uncategorized']
             
-            # Actualizar cache
-            self.wordpress_categories = category_names
+            logger.info(f"✅ Categorías obtenidas de WordPress: {len(self.wordpress_categories)} encontradas")
+            logger.info(f"📂 Categorías disponibles: {', '.join(self.wordpress_categories[:10])}{'...' if len(self.wordpress_categories) > 10 else ''}")
             
-            logger.info(f"✅ {len(category_names)} categorías obtenidas de WordPress: {', '.join(category_names[:5])}{'...' if len(category_names) > 5 else ''}")
-            
-            return category_names
+            return True
             
         except Exception as e:
-            logger.error(f"Error obteniendo categorías de WordPress: {e}")
-            # Fallback a categorías básicas si hay error
-            fallback_categories = ["Actualidad", "Noticias", "General"]
-            self.wordpress_categories = fallback_categories
-            logger.warning(f"Usando categorías fallback: {', '.join(fallback_categories)}")
-            return fallback_categories
-
-    def _validate_category(self, category_name: str) -> str:
+            logger.error(f"❌ Error obteniendo categorías de WordPress: {e}")
+            # Fallback: categorías básicas si no se puede conectar
+            self.wordpress_categories = ["Noticias", "Actualidad", "Local", "Nacional", "Internacional"]
+            logger.warning(f"⚠️ Usando categorías de fallback: {', '.join(self.wordpress_categories)}")
+            return False
+    
+    def _validate_category(self, suggested_category: str) -> str:
         """
-        NUEVO v2.0.2: Valida que la categoría exista o sugiere una alternativa
-        
-        Esta función garantiza que NUNCA se creen categorías nuevas,
-        cumpliendo con la restricción del usuario.
+        NUEVO v2.0.3: Valida que la categoría sugerida por la IA existe en WordPress
+        Si no existe, selecciona la más apropiada de las disponibles
         """
         try:
-            # Si no hay categorías en cache, obtenerlas
             if not self.wordpress_categories:
-                self._fetch_wordpress_categories()
+                # Si no hay categorías cargadas, usar fallback
+                return "Noticias"
             
-            # Verificar si la categoría existe exactamente
-            if category_name in self.wordpress_categories:
-                return category_name
+            # Buscar coincidencia exacta (case insensitive)
+            for wp_cat in self.wordpress_categories:
+                if wp_cat.lower() == suggested_category.lower():
+                    logger.info(f"✅ Categoría validada: '{wp_cat}'")
+                    return wp_cat
             
-            # Buscar categoría similar (case-insensitive)
-            category_lower = category_name.lower()
-            for existing_cat in self.wordpress_categories:
-                if existing_cat.lower() == category_lower:
-                    logger.info(f"Categoría '{category_name}' ajustada a '{existing_cat}' (coincidencia de mayúsculas)")
-                    return existing_cat
+            # Si no hay coincidencia exacta, buscar coincidencia parcial
+            for wp_cat in self.wordpress_categories:
+                if suggested_category.lower() in wp_cat.lower() or wp_cat.lower() in suggested_category.lower():
+                    logger.info(f"⚠️ Categoría aproximada: '{suggested_category}' → '{wp_cat}'")
+                    return wp_cat
             
-            # Si no hay coincidencia exacta, usar la primera categoría disponible
-            if self.wordpress_categories:
-                default_category = self.wordpress_categories[0]
-                logger.warning(f"Categoría '{category_name}' no existe. Usando '{default_category}' como alternativa")
-                return default_category
-            
-            # Último recurso
-            logger.error(f"No se pudieron obtener categorías de WordPress. Usando 'Actualidad' como fallback")
-            return "Actualidad"
+            # Si no hay ninguna coincidencia, usar la primera categoría disponible
+            fallback_category = self.wordpress_categories[0]
+            logger.warning(f"⚠️ Categoría '{suggested_category}' no encontrada. Usando: '{fallback_category}'")
+            return fallback_category
             
         except Exception as e:
-            logger.error(f"Error validando categoría: {e}")
-            return "Actualidad"
-
+            logger.error(f"❌ Error validando categoría: {e}")
+            return "Noticias"  # Fallback final
+    
     def resize_image(self, image_data: bytes) -> bytes:
         """Redimensiona imagen al tamaño objetivo con calidad optimizada"""
         try:
@@ -252,7 +241,7 @@ class TelegramToWordPressBotSEO:
             elif image.mode != 'RGB':
                 image = image.convert('RGB')
             
-            # Redimensionar manteniendo proporción
+            # Redimensionar manteniendo aspecto
             image.thumbnail((self.TARGET_WIDTH, self.TARGET_HEIGHT), Image.Resampling.LANCZOS)
             
             # Crear imagen final con fondo blanco si es necesario
@@ -263,7 +252,7 @@ class TelegramToWordPressBotSEO:
             y = (self.TARGET_HEIGHT - image.height) // 2
             final_image.paste(image, (x, y))
             
-            # Guardar en buffer
+            # Guardar como JPEG optimizado
             buffer = io.BytesIO()
             final_image.save(buffer, format='JPEG', quality=self.IMAGE_QUALITY, optimize=True)
             
@@ -276,210 +265,166 @@ class TelegramToWordPressBotSEO:
 
     def generate_seo_article(self, user_text: str, has_image: bool = False) -> Dict:
         """
-        Genera artículo SEO profesional usando Groq
-        MEJORADO v2.0.2: Prompt incluye categorías disponibles dinámicamente
+        Genera artículo SEO completo usando IA con prompt optimizado
+        MEJORADO v2.0.3: Incluye categorías dinámicas disponibles en WordPress
         """
         try:
-            if not self.groq_client:
-                return self._create_fallback_seo_article(user_text)
+            if not self.openai_client:
+                return self._generate_fallback_article(user_text)
             
-            # NUEVO v2.0.2: Obtener categorías disponibles para incluir en el prompt
-            available_categories = self.wordpress_categories if self.wordpress_categories else ["Actualidad", "Noticias", "General"]
-            categories_text = ", ".join(available_categories)
+            # Preparar lista de categorías para el prompt
+            categories_text = ", ".join(self.wordpress_categories) if self.wordpress_categories else "Noticias, Actualidad, Local"
             
-            # Prompt optimizado para SEO profesional anti-detección IA
-            # MEJORADO v2.0.2: Incluye categorías específicas del sitio
-            prompt = f"""
-Eres un editor SEO experto especializado en periodismo y neuromarketing argentino. Tu trabajo es crear artículos informativos en español de Argentina, usando lenguaje natural que NO se detecte como generado por IA.
+            # Prompt profesional optimizado con categorías dinámicas
+            prompt = f"""Eres un periodista SEO experto. Crea un artículo completo y profesional basado en esta información:
 
-CRÓNICA/INFORMACIÓN DEL CORRESPONSAL:
-{user_text}
+"{user_text}"
 
 IMAGEN DISPONIBLE: {'Sí' if has_image else 'No'}
 
-CATEGORÍAS WORDPRESS DISPONIBLES (OBLIGATORIO usar una de estas): {categories_text}
+CATEGORÍAS DISPONIBLES EN WORDPRESS: {categories_text}
 
-CRÍTICO: Debes extraer la KEYWORD ESPECÍFICA del contenido real. NO uses "información" ni "política" genéricas.
+IMPORTANTE: Solo puedes usar UNA de las categorías listadas arriba. Está PROHIBIDO crear nuevas categorías.
 
-Analiza el contenido y extrae:
-- El tema principal específico (ej: "retirada del Estado", "compras en Chile", "nueva legislación", etc.)
-- La keyword debe ser 2-3 palabras relevantes al tema exacto
+REQUISITOS OBLIGATORIOS:
+- Mínimo {self.min_word_count} palabras, objetivo {self.target_word_count} palabras
+- Estructura SEO profesional con H1, H2, H3
+- Meta descripción entre 140-160 caracteres
+- URL slug optimizada (máximo 60 caracteres)
+- Keyword principal identificada
+- Tags relevantes (3-5 tags)
+- Enlace interno y externo sugeridos
+- Datos estructurados JSON-LD
+- Tone periodístico profesional
 
-Genera un JSON con esta estructura EXACTA:
-
+FORMATO DE RESPUESTA (JSON válido):
 {{
-    "keyword_principal": "extraer del contenido real - 2-3 palabras específicas",
-    "titulo_h1": "Título natural de 30-70 caracteres, NO cortado, incluye keyword",
-    "meta_descripcion": "Exactamente 130 caracteres incluyendo keyword y call to action",
-    "slug_url": "url-amigable-con-guiones-sin-puntos",
-    "contenido_html": "Artículo completo HTML, estructura natural, mínimo 350 palabras",
-    "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-    "categoria": "OBLIGATORIO: una de estas categorías exactas: {categories_text}",
-    "enlace_interno": "/categoria/tema-relacionado",
-    "enlace_externo": "https://fuente-oficial.com",
-    "datos_estructurados": "JSON-LD para NewsArticle",
-    "intenciones_busqueda": ["intención 1", "intención 2", "intención 3"],
+    "titulo_h1": "Título principal optimizado para SEO",
+    "meta_descripcion": "Descripción entre 140-160 caracteres",
+    "slug_url": "url-optimizada-sin-espacios",
+    "keyword_principal": "keyword principal",
+    "categoria": "DEBE ser exactamente una de: {categories_text}",
+    "tags": ["tag1", "tag2", "tag3"],
+    "contenido_html": "<h2>Subtítulo</h2><p>Párrafo completo...</p><h3>Otro subtítulo</h3><p>Más contenido...</p>",
+    "enlace_interno": "https://example.com/articulo-relacionado",
+    "enlace_externo": "https://fuente-externa.com",
+    "datos_estructurados": "JSON-LD completo para NewsArticle",
     "imagen_destacada": {{"necesaria": {"true" if has_image else "false"}, "alt_text": "descripción de imagen", "titulo_imagen": "título descriptivo"}}
 }}
 
-REQUISITOS OBLIGATORIOS:
+RESPONDE ÚNICAMENTE CON EL JSON, SIN TEXTO ADICIONAL."""
 
-1. KEYWORD PRINCIPAL:
-   - Extraer del contenido real (NO genéricas como "información")
-   - 2-3 palabras específicas del tema
-   - Natural, no forzada
-
-2. TÍTULO H1:
-   - 30-70 caracteres EXACTOS
-   - NO cortar palabras a la mitad
-   - Incluir keyword de forma natural
-   - Gancho periodístico atractivo
-
-3. META DESCRIPCIÓN:
-   - EXACTAMENTE 130 caracteres (contar)
-   - Incluir keyword principal
-   - Call to action sutil
-   - Resumen conciso
-
-4. CONTENIDO HTML:
-   - MÍNIMO 350 palabras (puede ser más)
-   - Estructura natural, NO plantillas detectables
-   - H2, H3, H4 con variedad de encabezados
-   - Estilo periodístico argentino
-   - Responder qué, quién, cuándo, dónde, por qué, cómo
-
-5. VARIABILIDAD TOTAL:
-   - NO usar frases como "Te contamos toda la información"
-   - NO usar "Detalles Importantes" como H2
-   - Cada artículo debe tener estructura única
-   - Lenguaje natural, no robótico
-
-6. CATEGORÍA:
-   - OBLIGATORIO: usar exactamente una de las categorías disponibles: {categories_text}
-   - NO crear categorías nuevas
-   - Elegir la más relevante al contenido
-
-7. TAGS: 5 etiquetas específicas al tema real
-
-8. ENLACES CONTEXTUALES:
-   - Interno: categoría relacionada
-   - Externo: fuente oficial relevante
-
-9. DATOS ESTRUCTURADOS: NewsArticle válido
-
-CRÍTICO: El contenido debe ser ÚNICO, NATURAL y NO detectarse como generado por IA. Usar variedad en estructura y lenguaje.
-"""
-
-            response = self.groq_client.chat.completions.create(
-                model='llama-3.1-8b-instant',
-                messages=[
-                    {"role": "system", "content": "Eres un periodista experto y especialista en SEO que crea artículos noticiosos profesionales optimizados para motores de búsqueda."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=4000
-            )
-
-            # Extraer y parsear respuesta JSON
-            response_text = response.choices[0].message.content
+            return {"prompt": prompt}
             
-            # Buscar JSON en la respuesta
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                json_text = json_match.group()
-                try:
-                    article_data = json.loads(json_text)
-                    logger.info("✅ Artículo SEO generado exitosamente")
-                    return article_data
-                except json.JSONDecodeError:
-                    logger.warning("Error en JSON, usando extracción robusta")
-                    return self._extract_json_robust(response_text, user_text)
-            else:
-                logger.warning("No se encontró JSON válido, creando artículo básico")
-                return self._create_fallback_seo_article(user_text)
-                
         except Exception as e:
-            logger.error(f"Error generando artículo con IA: {e}")
-            return self._create_fallback_seo_article(user_text)
-
-    def _extract_json_robust(self, text: str, user_text: str) -> Dict:
-        """Extrae información de manera robusta cuando JSON falla"""
+            logger.error(f"Error generando prompt SEO: {e}")
+            return self._generate_fallback_article(user_text)
+    
+    def _generate_fallback_article(self, user_text: str) -> Dict:
+        """Genera artículo básico cuando la IA no está disponible"""
         try:
-            # Extraer elementos principales con regex
-            titulo = re.search(r'"titulo_h1":\s*"([^"]+)"', text)
-            keyword = re.search(r'"keyword_principal":\s*"([^"]+)"', text)
-            meta = re.search(r'"meta_descripcion":\s*"([^"]+)"', text)
-            contenido = re.search(r'"contenido_html":\s*"([^"]+)"', text, re.DOTALL)
+            # Usar primera categoría disponible como fallback
+            fallback_category = self.wordpress_categories[0] if self.wordpress_categories else "Noticias"
+            
+            # Extraer información básica
+            title = user_text[:100].strip()
+            if not title.endswith('.'):
+                title += "..."
+            
+            # Crear slug básico
+            slug = re.sub(r'[^\w\s-]', '', title.lower())
+            slug = re.sub(r'[-\s]+', '-', slug)[:60]
+            
+            # Meta descripción básica
+            meta_desc = f"{user_text[:140]}..." if len(user_text) > 140 else user_text
+            
+            # Contenido HTML básico
+            paragraphs = user_text.split('\n')
+            content_html = ""
+            for i, paragraph in enumerate(paragraphs):
+                if paragraph.strip():
+                    if i == 0:
+                        content_html += f"<h2>Desarrollo de la noticia</h2>\n"
+                    content_html += f"<p>{paragraph.strip()}</p>\n"
             
             return {
-                "keyword_principal": keyword.group(1) if keyword else "noticia actualidad",
-                "titulo_h1": titulo.group(1) if titulo else "Noticia de Actualidad",
-                "meta_descripcion": (meta.group(1)[:130] if meta else "Descubre las últimas noticias de actualidad. Información verificada y relevante sobre los acontecimientos más importantes.")[:130],
-                "slug_url": "noticia-actualidad",
-                "contenido_html": contenido.group(1) if contenido else f"<h2>Información Relevante</h2><p>{user_text}</p><h3>Contexto y Análisis</h3><p>Desarrollo completo de la información proporcionada por nuestro corresponsal.</p>",
-                "tags": ["actualidad", "noticias", "información", "sociedad", "último"],
-                "categoria": self._validate_category("Actualidad"),  # NUEVO v2.0.2: Usar validación
-                "enlace_interno": "/categoria/actualidad",
-                "enlace_externo": "https://www.perfil.com",
-                "datos_estructurados": f'{{"@context":"https://schema.org","@type":"NewsArticle","headline":"Noticia de Actualidad","author":{{"@type":"Person","name":"Redacción"}},"datePublished":"{datetime.now().isoformat()}"}}',
-                "intenciones_busqueda": ["últimas noticias", "qué está pasando", "información actualizada"]
+                "titulo_h1": title,
+                "meta_descripcion": meta_desc,
+                "slug_url": slug,
+                "keyword_principal": title.split()[0] if title.split() else "noticia",
+                "categoria": fallback_category,
+                "tags": ["noticia", "actualidad", "información"],
+                "contenido_html": content_html,
+                "enlace_interno": "",
+                "enlace_externo": "",
+                "datos_estructurados": "",
+                "imagen_destacada": {"necesaria": "false", "alt_text": "", "titulo_imagen": ""}
             }
+            
         except Exception as e:
-            logger.error(f"Error en extracción robusta: {e}")
-            return self._create_fallback_seo_article(user_text)
-
-    def _create_fallback_seo_article(self, user_text: str) -> Dict:
+            logger.error(f"Error en artículo fallback: {e}")
+            return {
+                "titulo_h1": "Artículo de Noticia",
+                "meta_descripcion": "Información actualizada",
+                "slug_url": "articulo-noticia",
+                "keyword_principal": "noticia",
+                "categoria": "Noticias",
+                "tags": ["noticia"],
+                "contenido_html": f"<p>{user_text}</p>",
+                "enlace_interno": "",
+                "enlace_externo": "",
+                "datos_estructurados": "",
+                "imagen_destacada": {"necesaria": "false", "alt_text": "", "titulo_imagen": ""}
+            }
+    
+    async def generate_article_with_ai(self, prompt_data: Dict) -> Dict:
+        """Ejecuta la generación del artículo usando OpenAI"""
+        try:
+            if not self.openai_client:
+                logger.warning("⚠️ OpenAI no disponible, usando fallback")
+                return {"error": "OpenAI no configurado"}
+            
+            response = await self.openai_client.chat.completions.create(
+                model=self.ai_model,
+                messages=[
+                    {"role": "system", "content": "Eres un periodista SEO experto. Respondes únicamente con JSON válido."},
+                    {"role": "user", "content": prompt_data["prompt"]}
+                ],
+                max_tokens=self.max_tokens,
+                temperature=0.7
+            )
+            
+            # Extraer contenido de respuesta
+            ai_response = response.choices[0].message.content.strip()
+            
+            # Limpiar respuesta para asegurar JSON válido
+            if ai_response.startswith('```json'):
+                ai_response = ai_response[7:-3]
+            elif ai_response.startswith('```'):
+                ai_response = ai_response[3:-3]
+            
+            # Parsear JSON
+            try:
+                article_data = json.loads(ai_response)
+                logger.info("✅ Artículo SEO generado exitosamente")
+                return article_data
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Error parseando JSON de IA: {e}")
+                logger.error(f"Respuesta recibida: {ai_response[:200]}...")
+                return {"error": "Respuesta de IA inválida"}
+                
+        except Exception as e:
+            logger.error(f"❌ Error generando artículo con IA: {e}")
+            return {"error": str(e)}
+    
+    async def upload_image_to_wordpress(self, image_data: bytes, filename: str) -> Tuple[Optional[str], Optional[int]]:
         """
-        Crea un artículo SEO básico cuando todo falla
-        MEJORADO v2.0.2: Usa validación de categorías
+        Sube imagen a WordPress y retorna URL e ID
+        MODIFICADO v2.0.3: Retorna tanto URL como ID para imagen destacada
         """
-        # Intentar extraer keyword del texto del usuario
-        words = user_text.lower().split()[:3]
-        keyword = " ".join(words[:2]) if len(words) >= 2 else "noticia importante"
-        titulo = f"Últimas noticias sobre {keyword.title()}"
-        
-        return {
-            "keyword_principal": keyword,
-            "titulo_h1": titulo[:70],
-            "meta_descripcion": f"Entérate de todo sobre {keyword}. Información completa, análisis detallado y contexto actualizado de la mano de nuestros corresponsales."[:130],
-            "slug_url": keyword.replace(" ", "-").replace(".", ""),
-            "contenido_html": f"""
-<h2>¿Qué está pasando con {keyword}?</h2>
-<p>Nuestro corresponsal nos informa sobre un desarrollo importante que merece la atención de nuestros lectores.</p>
-
-<h3>Información del corresponsal</h3>
-<p>{user_text}</p>
-
-<h3>Contexto y antecedentes</h3>
-<p>Este tipo de acontecimientos requiere un seguimiento detallado para comprender su impacto en la comunidad y las posibles implicaciones futuras.</p>
-
-<h4>Puntos clave a destacar</h4>
-<ul>
-<li>Relevancia del evento en el contexto actual</li>
-<li>Factores que contribuyen al desarrollo de la situación</li>
-<li>Posibles consecuencias e impacto social</li>
-<li>Reacciones de autoridades y ciudadanos</li>
-</ul>
-
-<h4>Seguimiento y próximos pasos</h4>
-<p>Continuaremos monitoreando esta situación para brindar actualizaciones oportunas a nuestros lectores. Es fundamental mantenerse informado a través de fuentes confiables.</p>
-
-<h3>Conclusión</h3>
-<p>La información proporcionada por nuestro corresponsal permite mantenernos al tanto de los acontecimientos que afectan a nuestra comunidad. Seguiremos reportando novedades según evolucione la situación.</p>
-""",
-            "tags": [keyword.split()[0] if keyword.split() else "noticias", "actualidad", "información", "sociedad", "corresponsal"],
-            "categoria": self._validate_category("Actualidad"),  # NUEVO v2.0.2: Usar validación de categorías
-            "enlace_interno": "/categoria/actualidad",
-            "enlace_externo": "https://www.infobae.com",
-            "datos_estructurados": f'{{"@context":"https://schema.org","@type":"NewsArticle","headline":"{titulo}","author":{{"@type":"Person","name":"Corresponsal"}},"datePublished":"{datetime.now().isoformat()}"}}',
-            "intenciones_busqueda": [f"noticias {keyword}", f"información {keyword}", f"{keyword} actualidad"]
-        }
-
-    async def upload_image_to_wordpress(self, image_data: bytes, filename: str) -> Optional[str]:
-        """Sube imagen a WordPress y retorna URL"""
         try:
             if not self.wp_client:
-                return None
+                return None, None
             
             # Redimensionar imagen
             resized_image = self.resize_image(image_data)
@@ -494,21 +439,25 @@ CRÍTICO: El contenido debe ser ÚNICO, NATURAL y NO detectarse como generado po
             # Subir a WordPress
             response = self.wp_client.call(media.UploadFile(data))
             
-            if response and 'url' in response:
-                logger.info(f"✅ Imagen subida a WordPress: {response['url']}")
-                return response['url']
+            if response and 'url' in response and 'id' in response:
+                logger.info(f"✅ Imagen subida a WordPress: {response['url']} (ID: {response['id']})")
+                return response['url'], response['id']
+            elif response and 'url' in response:
+                # Fallback si no hay ID en respuesta
+                logger.info(f"✅ Imagen subida a WordPress: {response['url']} (ID no disponible)")
+                return response['url'], None
             else:
                 logger.error("❌ Respuesta inválida de WordPress")
-                return None
+                return None, None
                 
         except Exception as e:
             logger.error(f"❌ Error subiendo imagen a WordPress: {e}")
-            return None
+            return None, None
 
-    async def publish_seo_article_to_wordpress(self, article_data: Dict, image_url: Optional[str] = None) -> Tuple[Optional[int], Optional[str]]:
+    async def publish_seo_article_to_wordpress(self, article_data: Dict, image_url: Optional[str] = None, image_id: Optional[int] = None) -> Tuple[Optional[int], Optional[str]]:
         """
         Publica artículo SEO completo en WordPress
-        MEJORADO v2.0.2: Usa validación de categorías
+        MEJORADO v2.0.3: Configura imagen destacada automáticamente
         """
         try:
             if not self.wp_client:
@@ -566,7 +515,7 @@ CRÍTICO: El contenido debe ser ÚNICO, NATURAL y NO detectarse como generado po
                 }
             
             if article_data.get('categoria'):
-                # NUEVO v2.0.2: Validar que la categoría existe en WordPress
+                # NUEVO v2.0.3: Validar que la categoría existe en WordPress
                 validated_category = self._validate_category(article_data['categoria'])
                 post.terms_names = post.terms_names or {}
                 post.terms_names['category'] = [validated_category]
@@ -574,245 +523,243 @@ CRÍTICO: El contenido debe ser ÚNICO, NATURAL y NO detectarse como generado po
             # Publicar post
             post_id = self.wp_client.call(posts.NewPost(post))
             
+            # NUEVO v2.0.3: Configurar imagen destacada si está disponible
+            if image_id and post_id:
+                try:
+                    # Configurar imagen destacada usando el ID del attachment
+                    self.wp_client.call(posts.SetPostThumbnail(post_id, image_id))
+                    logger.info(f"✅ Imagen destacada configurada - Post ID: {post_id}, Image ID: {image_id}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Error configurando imagen destacada: {e}")
+            
             logger.info(f"✅ Artículo SEO publicado exitosamente - ID: {post_id}")
             return post_id, article_data['titulo_h1']
             
         except Exception as e:
-            logger.error(f"❌ Error publicando artículo: {e}")
+            logger.error(f"❌ Error publicando en WordPress: {e}")
             return None, None
+    
+    async def send_welcome_message(self, chat_id: int):
+        """Envía mensaje de bienvenida con instrucciones"""
+        welcome_text = f"""🤖 **Bot SEO Periodístico v2.0.3 Activado**
 
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Comando /start mejorado"""
-        welcome_msg = """🤖 **Bot SEO Profesional v2.0.2 - ACTIVO**
+📰 **Funcionalidades:**
+• 📝 **Solo texto** - Artículo SEO de {self.min_word_count}+ palabras
+• 📸 **Foto + texto** - Artículo con imagen optimizada 1200x675px
+• 🎙️ **Audio + texto** - Transcripción automática + artículo SEO
+• 🔧 **Configuración automática** - Imagen destacada en WordPress
 
-📰 **Periodismo + IA + SEO = Artículos Profesionales**
-
-**Envía cualquiera de estas opciones:**
-• 📝 **Solo texto** - Crea artículo SEO completo
-• 📸 **Foto + texto** - Artículo con imagen optimizada 1200x675px  
-• 🎤 **Audio** - Transcribe y convierte en artículo
-
-**🚀 Características SEO Profesionales:**
-✅ Artículos 800+ palabras con estructura H1, H2, H3, H4
-✅ Meta descripción optimizada (130 caracteres)
-✅ Keywords principales y tags relevantes
-✅ Enlaces internos y externos contextual
-✅ Datos estructurados JSON-LD para NewsArticle
-✅ Imágenes redimensionadas automáticamente
-✅ Publicación directa en WordPress
-
-**🆕 NUEVO v2.0.2:**
-✅ Categorías automáticas desde WordPress
-✅ Adaptabilidad multi-sitio
-✅ Prohibición de crear categorías nuevas
-
-**📊 Optimización garantizada:**
-• Título H1 30-70 caracteres con keyword
-• Estructura semántica periodística profesional
-• Respuesta a las 5W del periodismo
-• Contenido verificable y contextualizado
-
-¡Envía tu crónica y la convertiremos en un artículo SEO profesional listo para publicar!"""
-        
-        await update.message.reply_text(welcome_msg)
-
-    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Comando /stats"""
-        uptime = datetime.now() - self.stats['start_time']
-        categories_info = f"📂 **Categorías disponibles:** {len(self.wordpress_categories)} categorías" if self.wordpress_categories else "📂 **Categorías:** No cargadas"
-        
-        stats_message = f"""📊 **Estadísticas del Bot SEO v2.0.2**
-
-⏱️ **Tiempo activo:** {uptime.days}d {uptime.seconds//3600}h {(uptime.seconds%3600)//60}m
-📨 **Mensajes procesados:** {self.stats['messages_processed']}
-📰 **Artículos SEO creados:** {self.stats['articles_created']}
-❌ **Errores:** {self.stats['errors']}
-📈 **Tasa de éxito:** {(self.stats['articles_created']/max(1,self.stats['messages_processed'])*100):.1f}%
-
-🔧 **Estado servicios:**
-{'✅' if self.groq_client else '❌'} Groq AI (SEO)
-{'✅' if self.wp_client else '❌'} WordPress
-{'✅' if self.openai_client else '❌'} OpenAI (Audio)
-{'✅' if self.bot else '❌'} Telegram Bot
-
-{categories_info}
-
-🎯 **Optimizaciones SEO aplicadas:**
-• Estructura H1, H2, H3, H4 semántica
-• Meta descripción con keywords
-• URLs amigables (slug)
-• Tags categorizados
-• Enlaces internos/externos
+⚙️ **Características SEO:**
+• Meta descripciones optimizadas
+• URLs amigables
+• Estructura H1, H2, H3
+• Keywords y tags automáticos
+• Enlaces internos y externos
 • Datos estructurados JSON-LD
-• Imágenes optimizadas
+• Categorías dinámicas desde WordPress
 
-🆕 **Características v2.0.2:**
-• Categorías automáticas desde WordPress
-• Validación estricta de categorías
-• Adaptabilidad multi-sitio
-"""
-        await update.message.reply_text(stats_message)
+📊 **Configuración actual:**
+• Palabras objetivo: {self.target_word_count}
+• Tamaño imagen: {self.TARGET_WIDTH}x{self.TARGET_HEIGHT}px
+• Modelo IA: {self.ai_model}
+
+🚀 **Para empezar:**
+Envía tu crónica o noticia (texto, imagen, audio)"""
+
+        try:
+            bot = Bot(token=self.telegram_token)
+            await bot.send_message(chat_id=chat_id, text=welcome_text, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Error enviando mensaje de bienvenida: {e}")
     
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Comando /help con guía SEO"""
-        help_message = """📖 **Guía de Uso - Bot SEO Profesional v2.0.2**
+    async def send_processing_message(self, chat_id: int) -> Optional[int]:
+        """Envía mensaje de procesamiento y retorna message_id para editar después"""
+        processing_text = """⏳ **Procesando contenido...**
 
-**🎯 Formatos aceptados:**
+🔄 **Pasos:**
+• Analizando contenido recibido
+• Generando artículo SEO optimizado  
 • Imagen + texto descriptivo
-• Solo texto (mínimo 20 palabras)
+• Optimizando imagen a 1200x675px
 • Imagen + audio transcrito
+• Configurando metadatos SEO
+• Preparando para WordPress
 
-**📝 Ejemplo óptimo:**
 [Adjuntar imagen]
-Caption: "Manifestación pacífica en Plaza San Martín. Aproximadamente 300 personas reclaman mejores salarios docentes. Participan gremios UEPC y AMET. Ambiente tranquilo, sin incidentes. Cortes parciales en calles aledañas."
 
-**🤖 El bot generará:**
-✅ Artículo SEO 800+ palabras con estructura periodística
-✅ Título H1 optimizado con keyword principal  
-✅ Meta descripción 130 caracteres exactos
-✅ Tags relevantes y categorización
-✅ Enlaces internos y externos contextuales
-✅ Datos estructurados para NewsArticle
+📝 **Esto puede tomar 30-60 segundos**
+
 ✅ Imagen redimensionada a 1200x675px
-✅ Publicación directa en WordPress
+🔄 Generando artículo SEO..."""
 
-**🆕 NUEVO v2.0.2:**
-✅ Categorías automáticas desde tu WordPress
-✅ NO crea categorías nuevas (solo usa existentes)
-✅ Adaptable a múltiples sitios web
-
-**⚠️ Tips para mejores resultados:**
-• Sé específico con nombres, lugares y números
-• Incluye el "qué, quién, cuándo, dónde, por qué"
-• Menciona contexto relevante
-• Describe el ambiente o situación
-
-**🚀 SEO garantizado:**
-Cada artículo se optimiza automáticamente para motores de búsqueda con técnicas profesionales de posicionamiento.
-
-**🆘 Soporte:**
-Comandos: /start /help /stats
-Versión: 2.0.2 - Categorías dinámicas
-"""
-        await update.message.reply_text(help_message)
+        try:
+            bot = Bot(token=self.telegram_token)
+            message = await bot.send_message(chat_id=chat_id, text=processing_text, parse_mode='Markdown')
+            return message.message_id
+        except Exception as e:
+            logger.error(f"Error enviando mensaje de procesamiento: {e}")
+            return None
     
-    def _is_authorized_user(self, user_id: int) -> bool:
-        """Verifica si el usuario está autorizado"""
-        if not self.AUTHORIZED_USERS:
-            return True  # Si no hay lista, todos están autorizados
-        return user_id in self.AUTHORIZED_USERS
+    async def update_processing_message(self, chat_id: int, message_id: int, step: str):
+        """Actualiza el mensaje de procesamiento con el paso actual"""
+        steps_text = {
+            "analyzing": "🔍 Analizando contenido recibido...",
+            "generating": "🤖 Generando artículo SEO con IA...", 
+            "uploading": "📤 Subiendo imagen a WordPress...",
+            "publishing": "📝 Publicando artículo en WordPress...",
+            "completed": "✅ ¡Proceso completado!"
+        }
+        
+        try:
+            bot = Bot(token=self.telegram_token)
+            await bot.edit_message_text(
+                chat_id=chat_id, 
+                message_id=message_id,
+                text=f"⏳ **Procesando...**\n\n{steps_text.get(step, step)}",
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.debug(f"Error actualizando mensaje: {e}")  # Log como debug, no es crítico
     
-    async def process_telegram_message(self, update: Update):
-        """Procesa mensajes entrantes de Telegram con características SEO"""
+    async def send_result_message(self, chat_id: int, success: bool, result_data: Dict):
+        """Envía mensaje con el resultado final del procesamiento"""
+        if success:
+            post_id, title = result_data.get('post_id'), result_data.get('title', 'Sin título')
+            post_url = f"{self.wordpress_url.rstrip('/')}/wp-admin/post.php?post={post_id}&action=edit" if post_id else "No disponible"
+            
+            success_text = f"""✅ **¡Artículo publicado exitosamente!**
+
+📰 **Título:** {title}
+🆔 **ID WordPress:** {post_id}
+🔗 **Editar:** [Ver en WordPress]({post_url})
+
+📊 **Detalles SEO:**
+• Imagen destacada: {'✅ Configurada' if result_data.get('image_configured') else '❌ No disponible'}
+• Categoría: {result_data.get('category', 'No especificada')}
+• Palabras: ~{result_data.get('word_count', 'N/A')}
+• Meta descripción: ✅ Optimizada
+
+🎯 **El artículo está listo y visible en tu sitio web.**"""
+            
+        else:
+            error_msg = result_data.get('error', 'Error desconocido')
+            success_text = f"""❌ **Error procesando el contenido**
+
+🔍 **Detalle del error:**
+{error_msg}
+
+💡 **Sugerencias:**
+• Verifica que el texto tenga al menos 10 caracteres
+• Asegúrate de que las APIs estén configuradas
+• Intenta nuevamente en unos momentos
+
+📞 **Si el problema persiste, contacta al administrador.**"""
+        
+        try:
+            bot = Bot(token=self.telegram_token)
+            await bot.send_message(chat_id=chat_id, text=success_text, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Error enviando resultado: {e}")
+    
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Manejador principal de mensajes de Telegram
+        Procesa texto, imágenes y audio para generar artículos SEO
+        """
         try:
             message = update.message
             user_id = message.from_user.id
+            chat_id = message.chat_id
             
-            # Verificar autorización si está configurada
-            if not self._is_authorized_user(user_id):
-                await message.reply_text("❌ No tienes autorización para usar este bot.")
-                return
-            
-            self.stats['messages_processed'] += 1
-            
-            # Verificar si el mensaje es válido para procesamiento
-            if not self._is_valid_journalist_message(message):
+            # Verificar autorización
+            if self.authorized_user_ids and user_id not in self.authorized_user_ids:
                 await message.reply_text(
-                    "📝 **Formato requerido:**\n"
-                    "• Envía una imagen con texto descriptivo, O\n"
-                    "• Envía texto de al menos 20 palabras\n\n"
-                    "💡 **Tip:** Incluye detalles como lugar, personas involucradas, contexto y números específicos para mejores artículos SEO."
+                    "❌ **Acceso denegado**\n\n"
+                    "No tienes permisos para usar este bot.\n"
+                    "Contacta al administrador para obtener acceso."
                 )
                 return
             
-            # Notificar que está procesando
-            processing_msg = await message.reply_text("🔄 **Generando artículo SEO profesional v2.0.2...**\n📊 Analizando contenido con IA\n🎯 Optimizando para motores de búsqueda")
+            # Verificar formato de mensaje válido
+            if not self._is_valid_journalist_message(message):
+                await message.reply_text(
+                    "📝 **Formato de mensaje inválido**\n\n"
+                    "**Formatos válidos:**\n"
+                    "• Texto descriptivo (mínimo 10 caracteres)\n"
+                    "• Imagen + texto descriptivo\n"
+                    "• Audio (con OpenAI configurado)\n"
+                    "• Imagen + audio transcrito\n"
+                    "\n"
+                    "**Ejemplo:**\n"
+                    "[Adjuntar imagen]\n"
+                    "Hoy se inauguró el nuevo centro comercial en el centro de la ciudad..."
+                )
+                return
+                
+            # Enviar mensaje de procesamiento
+            processing_msg_id = await self.send_processing_message(chat_id)
             
             # Extraer contenido del mensaje
+            await self.update_processing_message(chat_id, processing_msg_id, "analyzing")
             content_data = await self._extract_content_from_message(message)
+            
             if not content_data:
-                await processing_msg.edit_text("❌ Error extrayendo contenido del mensaje.")
-                self.stats['errors'] += 1
+                await self.send_result_message(chat_id, False, {'error': 'No se pudo extraer contenido del mensaje'})
                 return
             
             # Combinar texto y transcripción de audio
-            full_text = content_data['text_content']
-            if content_data['voice_transcript']:
-                full_text += f" {content_data['voice_transcript']}"
-            
-            if len(full_text.strip()) < 10:
-                await processing_msg.edit_text("❌ El contenido es muy corto. Proporciona más detalles para generar un artículo SEO completo.")
-                self.stats['errors'] += 1
-                return
-            
-            # Actualizar estado
-            await processing_msg.edit_text("🧠 **Generando artículo SEO con IA...**\n📝 Creando estructura H1, H2, H3, H4\n🎯 Optimizando keywords y meta descripción\n🔄 Validando categorías existentes")
+            combined_text = f"{content_data['text_content']} {content_data['voice_transcript']}".strip()
+            has_image = bool(content_data['image_data'])
             
             # Generar artículo SEO
-            has_image = bool(content_data['image_data'])
-            article_data = self.generate_seo_article(full_text, has_image)
+            await self.update_processing_message(chat_id, processing_msg_id, "generating") 
+            prompt_data = self.generate_seo_article(combined_text, has_image)
+            
+            if 'error' in prompt_data:
+                article_data = self._generate_fallback_article(combined_text)
+            else:
+                ai_result = await self.generate_article_with_ai(prompt_data)
+                if 'error' in ai_result:
+                    article_data = self._generate_fallback_article(combined_text)
+                else:
+                    article_data = ai_result
             
             # Subir imagen si existe
-            image_url = None
+            image_url, image_id = None, None
             if content_data['image_data']:
-                await processing_msg.edit_text("📸 **Procesando imagen...**\n🖼️ Redimensionando a 1200x675px\n⬆️ Subiendo a WordPress")
-                
+                await self.update_processing_message(chat_id, processing_msg_id, "uploading")
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"article_seo_{timestamp}.jpg"
-                image_url = await self.upload_image_to_wordpress(content_data['image_data'], filename)
+                filename = f"article_image_{timestamp}.jpg"
+                image_url, image_id = await self.upload_image_to_wordpress(content_data['image_data'], filename)
             
-            # Publicar artículo en WordPress
-            await processing_msg.edit_text("🚀 **Publicando artículo SEO...**\n📊 Aplicando optimizaciones\n✅ Validando categorías\n🌐 Enviando a WordPress")
+            # Publicar artículo
+            await self.update_processing_message(chat_id, processing_msg_id, "publishing")
+            post_id, post_title = await self.publish_seo_article_to_wordpress(article_data, image_url, image_id)
             
-            post_id, post_title = await self.publish_seo_article_to_wordpress(article_data, image_url)
+            # Actualizar a completado
+            await self.update_processing_message(chat_id, processing_msg_id, "completed")
             
+            # Enviar resultado
             if post_id:
-                # Mensaje de éxito detallado
-                success_msg = f"""✅ **ARTÍCULO SEO PUBLICADO EXITOSAMENTE v2.0.2**
-
-📝 **Título:** {post_title}
-🎯 **Keyword principal:** {article_data.get('keyword_principal', 'N/A')}
-📊 **Meta descripción:** {len(article_data.get('meta_descripcion', ''))} caracteres
-🏷️ **Tags:** {', '.join(article_data.get('tags', []))}
-📂 **Categoría:** {article_data.get('categoria', 'N/A')} ✅ VALIDADA
-🔗 **Post ID:** {post_id}
-
-**🚀 OPTIMIZACIONES SEO APLICADAS:**
-• ✅ Título H1 optimizado (30-70 caracteres)
-• ✅ Meta descripción con keyword (130 caracteres exactos)
-• ✅ Estructura H2, H3, H4 semántica y periodística
-• ✅ Enlaces internos y externos contextuales
-• ✅ Datos estructurados JSON-LD para NewsArticle
-• ✅ Tags categorizados y relevantes
-• ✅ URL amigable (slug optimizado)
-• ✅ Contenido 350+ palabras estructurado{' ✅ Imagen optimizada 1200x675px' if has_image else ''}
-
-**🆕 MEJORAS v2.0.2:**
-• ✅ Categoría obtenida dinámicamente de WordPress
-• ✅ Validación estricta (no crea categorías nuevas)
-• ✅ Adaptado a temática del sitio actual
-
-🌐 **Ver en WordPress:**
-{self.WORDPRESS_URL.replace('/xmlrpc.php', '')}/wp-admin/post.php?post={post_id}&action=edit
-
-📈 **SEO Score:** PROFESIONAL - Optimizado para motores de búsqueda"""
-                
-                await processing_msg.edit_text(success_msg)
-                self.stats['articles_created'] += 1
-                
+                result_data = {
+                    'post_id': post_id,
+                    'title': post_title,
+                    'category': article_data.get('categoria', 'No especificada'),
+                    'word_count': len(article_data.get('contenido_html', '').split()),
+                    'image_configured': bool(image_id)
+                }
+                await self.send_result_message(chat_id, True, result_data)
             else:
-                await processing_msg.edit_text("❌ **Error al publicar artículo**\n\nVerifica:\n• Conexión a WordPress\n• Permisos de usuario\n• Configuración XML-RPC")
-                self.stats['errors'] += 1
+                await self.send_result_message(chat_id, False, {'error': 'Error publicando en WordPress'})
                 
         except Exception as e:
-            logger.error(f"Error procesando mensaje: {e}")
-            self.stats['errors'] += 1
+            logger.error(f"Error manejando mensaje: {e}")
             try:
                 await update.message.reply_text(f"❌ **Error interno del sistema**\n\nDetalle: {str(e)[:100]}...\n\nIntenta nuevamente en unos momentos.")
             except:
                 pass
     
-    def _is_valid_journalist_message(self, message: Message) -> bool:
+    def _is_valid_journalist_message(self, message) -> bool:
         """Verifica si el mensaje tiene formato válido para procesamiento periodístico"""
         has_image = bool(message.photo)
         has_text = bool((message.caption and len(message.caption.strip()) >= 10) or 
@@ -822,7 +769,7 @@ Versión: 2.0.2 - Categorías dinámicas
         # Debe tener al menos texto suficiente, opcionalmente imagen o voz
         return has_text or has_voice
     
-    async def _extract_content_from_message(self, message: Message) -> Optional[Dict]:
+    async def _extract_content_from_message(self, message) -> Optional[Dict]:
         """Extrae y procesa el contenido del mensaje de Telegram"""
         try:
             image_data = None
@@ -833,6 +780,7 @@ Versión: 2.0.2 - Categorías dinámicas
                 photo_file = await photo.get_file()
                 
                 # Descargar imagen usando requests (más estable)
+                import requests
                 response = requests.get(photo_file.file_path)
                 if response.status_code == 200:
                     image_data = response.content
@@ -878,204 +826,121 @@ Versión: 2.0.2 - Categorías dinámicas
             # Descargar archivo de voz
             voice_file = await voice_message.get_file()
             
-            # Descargar usando requests
-            response = requests.get(voice_file.file_path)
-            if response.status_code != 200:
-                return None
-            
-            # Guardar temporalmente
-            temp_filename = f"temp_voice_{datetime.now().strftime('%Y%m%d_%H%M%S')}.ogg"
-            
-            with open(temp_filename, 'wb') as f:
-                f.write(response.content)
+            # Crear archivo temporal
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.ogg', delete=False) as temp_file:
+                import requests
+                response = requests.get(voice_file.file_path)
+                temp_file.write(response.content)
+                temp_file_path = temp_file.name
             
             # Transcribir con Whisper
-            with open(temp_filename, 'rb') as audio_file:
-                transcript = self.openai_client.audio.transcriptions.create(
+            with open(temp_file_path, 'rb') as audio_file:
+                transcript = await self.openai_client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file,
-                    language="es"
+                    language="es"  # Español por defecto
                 )
             
             # Limpiar archivo temporal
-            try:
-                os.remove(temp_filename)
-            except:
-                pass
+            os.unlink(temp_file_path)
             
-            return transcript.text
+            return transcript.text.strip()
             
         except Exception as e:
             logger.error(f"Error transcribiendo audio: {e}")
             return None
-
-# Variable global para instancia del bot
-bot_instance = None
-
-def create_flask_app():
-    """Crea y configura la aplicación Flask"""
-    app = Flask(__name__)
     
-    @app.route('/webhook', methods=['POST'])
-    def webhook():
-        """Webhook para recibir actualizaciones de Telegram"""
+    async def start_bot(self):
+        """Inicia el bot de Telegram y mantiene la conexión activa"""
         try:
-            global bot_instance
+            # Inicializar clientes
+            if not await self._initialize_clients():
+                logger.error("❌ No se pudieron inicializar los clientes necesarios")
+                return False
             
-            if not bot_instance:
-                logger.error("Bot no inicializado")
-                return jsonify({'error': 'Bot not initialized'}), 500
+            if not self.telegram_app:
+                logger.error("❌ Cliente de Telegram no disponible")
+                return False
             
-            # Obtener datos del webhook
-            update_data = request.get_json()
+            # Configurar handlers
+            self.telegram_app.add_handler(MessageHandler(
+                filters.TEXT | filters.PHOTO | filters.VOICE, 
+                self.handle_message
+            ))
             
-            if not update_data:
-                logger.warning("Webhook recibido sin datos")
-                return jsonify({'status': 'no_data'}), 400
+            # Enviar mensaje de activación al primer usuario autorizado
+            if self.authorized_user_ids:
+                try:
+                    await self.send_welcome_message(self.authorized_user_ids[0])
+                except Exception as e:
+                    logger.warning(f"No se pudo enviar mensaje de bienvenida: {e}")
             
-            # Crear objeto Update de Telegram
-            update = Update.de_json(update_data, bot_instance.bot)
+            # Iniciar bot
+            logger.info("🚀 Iniciando bot de Telegram...")
+            await self.telegram_app.initialize()
+            await self.telegram_app.start()
+            self.bot_running = True
             
-            # Procesar en background sin bloquear la respuesta
-            if update.message:
-                logger.info(f"Mensaje recibido de {update.message.from_user.first_name}")
+            logger.info("✅ Bot iniciado exitosamente - Esperando mensajes...")
+            
+            # Mantener bot corriendo
+            await self.telegram_app.updater.start_polling()
+            
+            # Esperar hasta que se detenga
+            while self.bot_running:
+                await asyncio.sleep(1)
                 
-                # Ejecutar procesamiento asíncrono
-                def run_async_processing():
-                    try:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        
-                        # Determinar tipo de procesamiento
-                        message = update.message
-                        if message.text and message.text.startswith('/'):
-                            # Es un comando
-                            if message.text == '/start':
-                                loop.run_until_complete(bot_instance.start_command(update, None))
-                            elif message.text == '/help':
-                                loop.run_until_complete(bot_instance.help_command(update, None))
-                            elif message.text == '/stats':
-                                loop.run_until_complete(bot_instance.stats_command(update, None))
-                        else:
-                            # Es un mensaje regular
-                            loop.run_until_complete(bot_instance.process_telegram_message(update))
-                        
-                        loop.close()
-                    except Exception as e:
-                        logger.error(f"Error procesando mensaje: {e}")
-                
-                # Ejecutar en hilo separado
-                thread = threading.Thread(target=run_async_processing)
-                thread.daemon = True
-                thread.start()
-                
-            return jsonify({'status': 'ok'}), 200
-            
         except Exception as e:
-            logger.error(f"Error en webhook: {e}")
-            return jsonify({'error': str(e)}), 500
+            logger.error(f"❌ Error crítico en el bot: {e}")
+            return False
+        finally:
+            if self.telegram_app:
+                await self.telegram_app.stop()
+                await self.telegram_app.shutdown()
     
-    @app.route('/')
-    def health_check():
-        """Health check endpoint"""
-        global bot_instance
-        
-        status = "Bot SEO Profesional v2.0.2 - ACTIVO ✅" if bot_instance else "Bot no inicializado ❌"
-        
-        info = f"""🤖 {status}
+    async def stop_bot(self):
+        """Detiene el bot de forma segura"""
+        logger.info("🔴 Deteniendo bot...")
+        self.bot_running = False
 
-📰 **Características SEO:**
-• Artículos 350+ palabras estructurados
-• Títulos H1 optimizados (30-70 caracteres)
-• Meta descripción exacta (130 caracteres)
-• Structure H2, H3, H4 semántica
-• Keywords principales y tags
-• Enlaces internos/externos contextuales
-• Datos estructurados JSON-LD NewsArticle
-• Imágenes optimizadas 1200x675px
-• Publicación directa WordPress
-
-🆕 **NOVEDADES v2.0.2:**
-• Categorías automáticas desde WordPress
-• Validación estricta de categorías
-• Adaptabilidad multi-sitio
-• Prohibición de crear categorías nuevas
-
-🔧 **Estado servicios:**"""
-        
-        if bot_instance:
-            categories_count = len(bot_instance.wordpress_categories) if bot_instance.wordpress_categories else 0
-            info += f"""
-✅ Groq AI: {'Conectado' if bot_instance.groq_client else 'Desconectado'}
-✅ WordPress: {'Conectado' if bot_instance.wp_client else 'Desconectado'}  
-✅ OpenAI: {'Conectado' if bot_instance.openai_client else 'Desconectado'}
-✅ Telegram: {'Conectado' if bot_instance.bot else 'Desconectado'}
-📂 Categorías: {categories_count} disponibles
-
-📊 **Estadísticas:**
-• Mensajes procesados: {bot_instance.stats['messages_processed']}
-• Artículos SEO creados: {bot_instance.stats['articles_created']}
-• Tasa de éxito: {(bot_instance.stats['articles_created']/max(1,bot_instance.stats['messages_processed'])*100):.1f}%"""
-        
-        return info
-    
-    @app.route('/stats')
-    def get_stats():
-        global bot_instance
-        if bot_instance:
-            stats = bot_instance.stats.copy()
-            stats['categories_count'] = len(bot_instance.wordpress_categories) if bot_instance.wordpress_categories else 0
-            stats['version'] = '2.0.2'
-            return jsonify(stats)
-        return jsonify({'error': 'Bot not initialized'})
-    
-    return app
-
-def main():
-    """Función principal del bot"""
-    global bot_instance
-    
+# Punto de entrada principal
+async def main():
+    """Función principal del programa"""
     try:
-        # Inicializar bot
-        bot_instance = TelegramToWordPressBotSEO()
+        # Crear instancia del bot
+        bot = WordPressSEOBot()
         
         # Verificar configuración crítica
-        if not bot_instance.TELEGRAM_TOKEN:
-            logger.error("❌ TELEGRAM_BOT_TOKEN no configurado")
+        missing_vars = []
+        if not bot.telegram_token:
+            missing_vars.append('TELEGRAM_TOKEN')
+        if not bot.wordpress_url:
+            missing_vars.append('WORDPRESS_URL')
+        if not bot.wordpress_user:
+            missing_vars.append('WORDPRESS_USER')
+        if not bot.wordpress_password:
+            missing_vars.append('WORDPRESS_PASSWORD')
+        
+        if missing_vars:
+            logger.error(f"❌ Variables de entorno faltantes: {', '.join(missing_vars)}")
+            logger.error("💡 Asegúrate de configurar todas las variables necesarias en el archivo .env")
             return
         
-        if not bot_instance.groq_client:
-            logger.error("❌ GROQ_API_KEY no configurado")
-            return
+        # Iniciar bot
+        logger.info("🚀 Iniciando Sistema SEO Bot v2.0.3...")
+        await bot.start_bot()
         
-        if not bot_instance.wp_client:
-            logger.error("❌ Configuración de WordPress incompleta")
-            return
-        
-        logger.info("🚀 Bot SEO Profesional v2.0.2 inicializado correctamente")
-        logger.info(f"📊 Configuración activa:")
-        logger.info(f"  - Groq AI: {'✅' if bot_instance.groq_client else '❌'}")
-        logger.info(f"  - OpenAI: {'✅' if bot_instance.openai_client else '❌'}")
-        logger.info(f"  - WordPress: {'✅' if bot_instance.wp_client else '❌'}")
-        logger.info(f"  - Telegram: {'✅' if bot_instance.bot else '❌'}")
-        logger.info(f"  - Categorías: {len(bot_instance.wordpress_categories) if bot_instance.wordpress_categories else 0} disponibles")
-        logger.info(f"  - Usuarios autorizados: {len(bot_instance.AUTHORIZED_USERS) if bot_instance.AUTHORIZED_USERS else 'Todos'}")
-        
-        # Crear y ejecutar aplicación Flask
-        app = create_flask_app()
-        
-        port = int(os.getenv('PORT', 10000))
-        logger.info(f"✅ Servidor SEO v2.0.2 iniciado en puerto {port}")
-        logger.info("🔗 Webhook URL: https://periodismo-bot.onrender.com/webhook")
-        logger.info("🎯 Bot listo para generar artículos SEO profesionales")
-        logger.info("🆕 Características v2.0.2: Categorías dinámicas + Multi-sitio")
-        
-        # Ejecutar Flask
-        app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
-        
+    except KeyboardInterrupt:
+        logger.info("🔴 Detenido por el usuario")
     except Exception as e:
-        logger.error(f"Error fatal: {e}")
-        raise
+        logger.error(f"❌ Error crítico: {e}")
 
 if __name__ == "__main__":
-    main()
+    # Configurar asyncio para Windows si es necesario
+    import sys
+    if sys.platform.startswith('win'):
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    
+    # Ejecutar programa principal
+    asyncio.run(main())
