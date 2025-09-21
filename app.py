@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Sistema mejorado para automatización periodística v2.1.0
-🚀 VERSIÓN DEFINITIVA CON TODAS LAS CORRECCIONES:
+Sistema mejorado para automatización periodística v2.1.1
+🚀 VERSIÓN DEFINITIVA CON MÉTODO v2.0.7 RESTAURADO:
 - ✅ Fix RuntimeError('Event loop is closed')
 - ✅ DEBUG logging habilitado para diagnóstico completo
-- ✅ Logs detallados para featured image
+- ✅ MÉTODO SetPostThumbnail v2.0.7 RESTAURADO (que funcionaba)
 - ✅ Manejo robusto de errores SSL
 - ✅ Validaciones mejoradas
 """
@@ -51,13 +51,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ✅ LOG INICIAL PARA CONFIRMAR DEBUG ACTIVO
-logger.debug("🔧 DEBUG MODE ACTIVADO - Iniciando bot v2.1.0")
+logger.debug("🔧 DEBUG MODE ACTIVADO - Iniciando bot v2.1.1")
 
 class TelegramToWordPressBot:
     """Bot mejorado con validaciones y características adicionales"""
     
     def __init__(self):
-        logger.debug("🔧 Inicializando TelegramToWordPressBot v2.1.0")
+        logger.debug("🔧 Inicializando TelegramToWordPressBot v2.1.1")
         
         # Configuraciones desde variables de entorno
         self.TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -144,7 +144,7 @@ class TelegramToWordPressBot:
         logger.debug(f"🔧 Comando /start ejecutado por usuario: {update.effective_user.id}")
         
         welcome_message = """
-🤖 **Bot Automatización Periodística v2.1.0**
+🤖 **Bot Automatización Periodística v2.1.1**
 
 ✅ **Funcionalidades:**
 • Análisis automático de noticias
@@ -170,7 +170,7 @@ class TelegramToWordPressBot:
         logger.debug(f"🔧 Comando /help ejecutado por usuario: {update.effective_user.id}")
         
         help_text = """
-🆘 **Ayuda - Bot Periodístico v2.1.0**
+🆘 **Ayuda - Bot Periodístico v2.1.1**
 
 **Comandos disponibles:**
 • `/start` - Iniciar bot
@@ -200,7 +200,7 @@ class TelegramToWordPressBot:
         uptime = datetime.now() - datetime.fromisoformat(self.stats['inicio'])
         
         stats_text = f"""
-📊 **Estadísticas del Bot v2.1.0**
+📊 **Estadísticas del Bot v2.1.1**
 
 **Tiempo activo:** {str(uptime).split('.')[0]}
 **Mensajes procesados:** {self.stats['mensajes_procesados']}
@@ -523,79 +523,65 @@ class TelegramToWordPressBot:
         return None
 
     async def _set_featured_image_ultra_robust(self, post_id: int, image_id: int) -> bool:
-        """Asigna imagen destacada con validación ultra robusta"""
-        logger.debug(f"🔧 INICIANDO ASIGNACIÓN ULTRA ROBUSTA - Post ID: {post_id}, Image ID: {image_id}")
+        """Asigna imagen destacada usando MÉTODO v2.0.7 que FUNCIONABA"""
+        logger.debug(f"🔧 INICIANDO ASIGNACIÓN v2.0.7 RESTAURADA - Post ID: {post_id}, Image ID: {image_id}")
         
-        try:
-            # Método 1: Usando post.thumbnail (ya debería estar hecho, pero verificamos)
-            logger.debug("🔧 Método 1: Verificando post.thumbnail...")
-            
-            # Obtener el post actual
-            current_post = self.wp_client.call(posts.GetPost(post_id))
-            logger.debug(f"🔧 Post obtenido: ID={current_post.id}, thumbnail={getattr(current_post, 'thumbnail', 'NO_THUMBNAIL')}")
-            
-            # Si no tiene thumbnail, asignarlo
-            if not hasattr(current_post, 'thumbnail') or not current_post.thumbnail:
-                logger.debug("🔧 Asignando thumbnail al post...")
-                current_post.thumbnail = image_id
-                
-                # Actualizar post
-                result = self.wp_client.call(posts.EditPost(post_id, current_post))
-                logger.debug(f"🔧 Resultado de EditPost: {result}")
-                
-                # Verificar que se asignó
-                updated_post = self.wp_client.call(posts.GetPost(post_id))
-                final_thumbnail = getattr(updated_post, 'thumbnail', None)
-                
-                if final_thumbnail == image_id:
-                    logger.debug(f"✅ IMAGEN DESTACADA ASIGNADA EXITOSAMENTE via post.thumbnail: {final_thumbnail}")
-                    return True
-                else:
-                    logger.error(f"❌ FALLÓ asignación via post.thumbnail. Expected: {image_id}, Got: {final_thumbnail}")
-            else:
-                logger.debug(f"✅ Post ya tiene thumbnail asignado: {current_post.thumbnail}")
-                return True
-            
-            # Método 2: Usando metadato _thumbnail_id directamente
-            logger.debug("🔧 Método 2: Asignando via _thumbnail_id...")
-            
+        max_retries = 5
+        for attempt in range(max_retries):
             try:
-                # Agregar/actualizar custom field _thumbnail_id
-                if not hasattr(current_post, 'custom_fields'):
-                    current_post.custom_fields = []
+                logger.debug(f"🔧 Intento {attempt + 1}/{max_retries} - Usando posts.SetPostThumbnail...")
                 
-                # Remover _thumbnail_id existente si existe
-                current_post.custom_fields = [cf for cf in current_post.custom_fields 
-                                            if cf.get('key') != '_thumbnail_id']
+                # ✅ MÉTODO EXACTO DE v2.0.7 QUE FUNCIONABA
+                from wordpress_xmlrpc.methods.posts import SetPostThumbnail
+                result = self.wp_client.call(SetPostThumbnail(post_id, image_id))
                 
-                # Agregar nuevo _thumbnail_id
-                current_post.custom_fields.append({
-                    'key': '_thumbnail_id',
-                    'value': str(image_id)
-                })
+                logger.debug(f"🔧 Resultado SetPostThumbnail: {result}")
                 
-                # Actualizar post
-                result = self.wp_client.call(posts.EditPost(post_id, current_post))
-                logger.debug(f"🔧 Resultado de EditPost con _thumbnail_id: {result}")
-                
-                # Verificar final
-                final_post = self.wp_client.call(posts.GetPost(post_id))
-                final_thumbnail = getattr(final_post, 'thumbnail', None)
-                
-                if final_thumbnail == image_id:
-                    logger.debug(f"✅ IMAGEN DESTACADA ASIGNADA EXITOSAMENTE via _thumbnail_id: {final_thumbnail}")
-                    return True
+                if result:
+                    logger.debug("✅ IMAGEN DESTACADA CONFIGURADA EXITOSAMENTE!")
+                    
+                    # Verificar que realmente se asignó
+                    verification_post = self.wp_client.call(posts.GetPost(post_id))
+                    final_thumbnail = getattr(verification_post, 'thumbnail', None)
+                    
+                    if final_thumbnail == image_id:
+                        logger.debug(f"✅ VERIFICACIÓN EXITOSA - Thumbnail asignado: {final_thumbnail}")
+                        return True
+                    else:
+                        logger.warning(f"⚠️ SetPostThumbnail retornó True pero verificación falló. Expected: {image_id}, Got: {final_thumbnail}")
+                        # Continuar con siguiente intento
                 else:
-                    logger.error(f"❌ FALLÓ asignación final. Expected: {image_id}, Got: {final_thumbnail}")
+                    logger.warning(f"⚠️ SetPostThumbnail retornó False en intento {attempt + 1}")
                 
+            except ImportError:
+                # Fallback si SetPostThumbnail no está disponible
+                logger.warning("⚠️ SetPostThumbnail no disponible, usando método EditPost...")
+                try:
+                    current_post = self.wp_client.call(posts.GetPost(post_id))
+                    current_post.thumbnail = image_id
+                    result = self.wp_client.call(posts.EditPost(post_id, current_post))
+                    
+                    if result:
+                        verification_post = self.wp_client.call(posts.GetPost(post_id))
+                        final_thumbnail = getattr(verification_post, 'thumbnail', None)
+                        
+                        if final_thumbnail == image_id:
+                            logger.debug(f"✅ IMAGEN DESTACADA ASIGNADA via EditPost: {final_thumbnail}")
+                            return True
+                            
+                except Exception as e:
+                    logger.error(f"❌ Error en fallback EditPost: {e}")
+                    
             except Exception as e:
-                logger.error(f"❌ Error en método 2 (_thumbnail_id): {e}", exc_info=True)
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"❌ Error crítico en _set_featured_image_ultra_robust: {e}", exc_info=True)
-            return False
+                logger.warning(f"⚠️ Error en intento {attempt + 1}: {e}")
+                
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) + 1
+                    logger.debug(f"🔧 Esperando {wait_time}s antes del siguiente intento...")
+                    await asyncio.sleep(wait_time)
+        
+        logger.error("❌ FALLÓ LA ASIGNACIÓN DE IMAGEN DESTACADA DESPUÉS DE TODOS LOS INTENTOS")
+        return False
 
     async def process_telegram_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Procesa mensajes de Telegram"""
@@ -787,8 +773,8 @@ FORMATO DE RESPUESTA (JSON):
             }
 
     def run(self):
-        """Inicia el bot con configuración robusta v2.1.0"""
-        logger.debug("🔧 Iniciando bot v2.1.0...")
+        """Inicia el bot con configuración robusta v2.1.1"""
+        logger.debug("🔧 Iniciando bot v2.1.1...")
         
         if not self.TELEGRAM_TOKEN:
             logger.error("❌ Token de Telegram no configurado")
@@ -824,7 +810,7 @@ FORMATO DE RESPUESTA (JSON):
                 )
             )
             
-            logger.info("🚀 Bot v2.1.0 iniciado exitosamente")
+            logger.info("🚀 Bot v2.1.1 iniciado exitosamente")
             logger.info("📡 Esperando mensajes de periodistas...")
             logger.debug("🔧 Configuración completa - Iniciando polling...")
             
@@ -845,7 +831,7 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "service": "telegram-wordpress-bot",
-        "version": "2.1.0"
+        "version": "2.1.1"
     }
 
 def run_flask():
@@ -855,7 +841,7 @@ def run_flask():
 
 # 🚨 PUNTO DE ENTRADA PRINCIPAL CON FIX DE EVENT LOOP
 if __name__ == "__main__":
-    logger.debug("🔧 === INICIANDO APLICACIÓN V2.1.0 ===")
+    logger.debug("🔧 === INICIANDO APLICACIÓN V2.1.1 ===")
     
     # Inicializar bot
     bot = TelegramToWordPressBot()
