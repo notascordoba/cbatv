@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Sistema SEO Profesional para automatización periodística v2.0.3
+Sistema SEO Profesional para automatización periodística v2.0.4
 Bot que convierte crónicas en artículos SEO optimizados para WordPress
 Base sólida sin errores de inicialización + características SEO avanzadas
 
-VERSIÓN: 2.0.3
+VERSIÓN: 2.0.4
 FECHA: 2025-09-21
 CAMBIOS:
 + Obtención automática de categorías de WordPress usando XML-RPC
@@ -13,8 +13,10 @@ CAMBIOS:
 + Adaptabilidad multi-sitio para diferentes temáticas
 + Cache de categorías para optimizar rendimiento
 + Fallbacks inteligentes en caso de problemas de conexión
-+ NUEVO: Configuración automática de imagen destacada en WordPress
-+ NUEVO: Optimización de redimensionado a 1200x675px como featured image
++ Configuración automática de imagen destacada en WordPress
++ Optimización de redimensionado a 1200x675px como featured image
++ CORRECCIÓN CRÍTICA: Flujo de generación de artículos mejorado y robusto
++ CORRECCIÓN: Manejo consistente de errores y fallbacks
 """
 
 import os
@@ -34,6 +36,7 @@ from typing import Optional, Dict, List, Tuple
 import wordpress_xmlrpc
 from wordpress_xmlrpc import Client, WordPressPost
 from wordpress_xmlrpc.methods import posts, media
+from wordpress_xmlrpc.methods.posts import SetPostThumbnail
 from wordpress_xmlrpc.methods.taxonomies import GetTerms
 
 # Imports de Telegram
@@ -114,7 +117,7 @@ class WordPressSEOBot:
     async def _initialize_clients(self) -> bool:
         """
         Inicializa conexiones con APIs externas y obtiene categorías de WordPress
-        NUEVO v2.0.3: Incluye cache de categorías disponibles
+        NUEVO v2.0.4: Incluye cache de categorías disponibles
         """
         try:
             success_count = 0
@@ -148,7 +151,7 @@ class WordPressSEOBot:
                     logger.info("✅ Cliente WordPress conectado")
                     success_count += 1
                     
-                    # NUEVO v2.0.3: Obtener categorías disponibles del sitio
+                    # NUEVO v2.0.4: Obtener categorías disponibles del sitio
                     await self._fetch_wordpress_categories()
                     
                 except Exception as e:
@@ -168,7 +171,7 @@ class WordPressSEOBot:
     
     async def _fetch_wordpress_categories(self) -> bool:
         """
-        NUEVO v2.0.3: Obtiene categorías disponibles desde WordPress
+        NUEVO v2.0.4: Obtiene categorías disponibles desde WordPress
         Usa XML-RPC para obtener la lista completa de categorías del sitio
         """
         try:
@@ -196,7 +199,7 @@ class WordPressSEOBot:
     
     def _validate_category(self, suggested_category: str) -> str:
         """
-        NUEVO v2.0.3: Valida que la categoría sugerida por la IA existe en WordPress
+        NUEVO v2.0.4: Valida que la categoría sugerida por la IA existe en WordPress
         Si no existe, selecciona la más apropiada de las disponibles
         """
         try:
@@ -263,14 +266,16 @@ class WordPressSEOBot:
             logger.error(f"Error redimensionando imagen: {e}")
             return image_data
 
-    def generate_seo_article(self, user_text: str, has_image: bool = False) -> Dict:
+    def generate_seo_prompt(self, user_text: str, has_image: bool = False) -> Dict:
         """
-        Genera artículo SEO completo usando IA con prompt optimizado
-        MEJORADO v2.0.3: Incluye categorías dinámicas disponibles en WordPress
+        CORREGIDO v2.0.4: Genera prompt para IA de manera consistente
+        SIEMPRE retorna un diccionario con 'prompt' o 'error'
         """
         try:
-            if not self.openai_client:
-                return self._generate_fallback_article(user_text)
+            # Validar entrada
+            if not user_text or len(user_text.strip()) < 5:
+                logger.warning("⚠️ Texto insuficiente para generar artículo")
+                return {"error": "Texto insuficiente"}
             
             # Preparar lista de categorías para el prompt
             categories_text = ", ".join(self.wordpress_categories) if self.wordpress_categories else "Noticias, Actualidad, Local"
@@ -317,35 +322,54 @@ RESPONDE ÚNICAMENTE CON EL JSON, SIN TEXTO ADICIONAL."""
             return {"prompt": prompt}
             
         except Exception as e:
-            logger.error(f"Error generando prompt SEO: {e}")
-            return self._generate_fallback_article(user_text)
+            logger.error(f"❌ Error generando prompt SEO: {e}")
+            return {"error": f"Error generando prompt: {str(e)}"}
     
     def _generate_fallback_article(self, user_text: str) -> Dict:
-        """Genera artículo básico cuando la IA no está disponible"""
+        """
+        CORREGIDO v2.0.4: Genera artículo básico con validación robusta
+        """
         try:
+            # Validar entrada
+            if not user_text:
+                user_text = "Artículo generado automáticamente"
+            
+            user_text = str(user_text).strip()
+            if len(user_text) < 5:
+                user_text = "Noticia importante generada automáticamente por el sistema de publicación."
+            
             # Usar primera categoría disponible como fallback
             fallback_category = self.wordpress_categories[0] if self.wordpress_categories else "Noticias"
             
             # Extraer información básica
-            title = user_text[:100].strip()
-            if not title.endswith('.'):
+            title = user_text[:80].strip()
+            if not title:
+                title = "Artículo de Noticia"
+            if not title.endswith('.') and not title.endswith('?') and not title.endswith('!'):
                 title += "..."
             
             # Crear slug básico
             slug = re.sub(r'[^\w\s-]', '', title.lower())
-            slug = re.sub(r'[-\s]+', '-', slug)[:60]
+            slug = re.sub(r'[-\s]+', '-', slug)[:50]
+            if not slug:
+                slug = "articulo-noticia"
             
             # Meta descripción básica
-            meta_desc = f"{user_text[:140]}..." if len(user_text) > 140 else user_text
+            meta_desc = user_text[:140] if len(user_text) > 140 else user_text
+            if len(meta_desc) < 50:
+                meta_desc = f"Artículo sobre {title[:50]}. Información actualizada y relevante."
             
-            # Contenido HTML básico
+            # Contenido HTML básico estructurado
             paragraphs = user_text.split('\n')
-            content_html = ""
-            for i, paragraph in enumerate(paragraphs):
+            content_html = f"<h2>Información Principal</h2>\n"
+            
+            for paragraph in paragraphs:
                 if paragraph.strip():
-                    if i == 0:
-                        content_html += f"<h2>Desarrollo de la noticia</h2>\n"
                     content_html += f"<p>{paragraph.strip()}</p>\n"
+            
+            # Si el contenido es muy corto, expandir
+            if len(content_html) < 200:
+                content_html += f"<h3>Detalles Adicionales</h3>\n<p>Esta noticia representa información importante que será actualizada conforme se disponga de más detalles.</p>\n"
             
             return {
                 "titulo_h1": title,
@@ -362,27 +386,34 @@ RESPONDE ÚNICAMENTE CON EL JSON, SIN TEXTO ADICIONAL."""
             }
             
         except Exception as e:
-            logger.error(f"Error en artículo fallback: {e}")
+            logger.error(f"❌ Error crítico en artículo fallback: {e}")
+            # Fallback absoluto
             return {
                 "titulo_h1": "Artículo de Noticia",
-                "meta_descripcion": "Información actualizada",
-                "slug_url": "articulo-noticia",
+                "meta_descripcion": "Información actualizada del sistema de noticias",
+                "slug_url": "articulo-noticia-sistema",
                 "keyword_principal": "noticia",
                 "categoria": "Noticias",
-                "tags": ["noticia"],
-                "contenido_html": f"<p>{user_text}</p>",
+                "tags": ["noticia", "sistema"],
+                "contenido_html": f"<h2>Información</h2><p>{str(user_text)[:500] if user_text else 'Contenido generado automáticamente'}</p>",
                 "enlace_interno": "",
                 "enlace_externo": "",
                 "datos_estructurados": "",
                 "imagen_destacada": {"necesaria": "false", "alt_text": "", "titulo_imagen": ""}
             }
     
-    async def generate_article_with_ai(self, prompt_data: Dict) -> Dict:
-        """Ejecuta la generación del artículo usando OpenAI"""
+    async def generate_article_with_ai(self, prompt_data: Dict, user_text: str) -> Dict:
+        """
+        CORREGIDO v2.0.4: Ejecuta la generación del artículo usando OpenAI con manejo robusto
+        """
         try:
             if not self.openai_client:
                 logger.warning("⚠️ OpenAI no disponible, usando fallback")
-                return {"error": "OpenAI no configurado"}
+                return self._generate_fallback_article(user_text)
+            
+            if "prompt" not in prompt_data:
+                logger.error("❌ Prompt inválido recibido")
+                return self._generate_fallback_article(user_text)
             
             response = await self.openai_client.chat.completions.create(
                 model=self.ai_model,
@@ -406,21 +437,31 @@ RESPONDE ÚNICAMENTE CON EL JSON, SIN TEXTO ADICIONAL."""
             # Parsear JSON
             try:
                 article_data = json.loads(ai_response)
-                logger.info("✅ Artículo SEO generado exitosamente")
+                
+                # Validar que tenga las claves requeridas
+                required_keys = ['titulo_h1', 'meta_descripcion', 'slug_url', 'categoria', 'contenido_html']
+                missing_keys = [key for key in required_keys if key not in article_data]
+                
+                if missing_keys:
+                    logger.warning(f"⚠️ IA generó artículo incompleto, faltan: {missing_keys}")
+                    return self._generate_fallback_article(user_text)
+                
+                logger.info("✅ Artículo SEO generado exitosamente con IA")
                 return article_data
+                
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Error parseando JSON de IA: {e}")
                 logger.error(f"Respuesta recibida: {ai_response[:200]}...")
-                return {"error": "Respuesta de IA inválida"}
+                return self._generate_fallback_article(user_text)
                 
         except Exception as e:
             logger.error(f"❌ Error generando artículo con IA: {e}")
-            return {"error": str(e)}
+            return self._generate_fallback_article(user_text)
     
     async def upload_image_to_wordpress(self, image_data: bytes, filename: str) -> Tuple[Optional[str], Optional[int]]:
         """
         Sube imagen a WordPress y retorna URL e ID
-        MODIFICADO v2.0.3: Retorna tanto URL como ID para imagen destacada
+        MODIFICADO v2.0.4: Retorna tanto URL como ID para imagen destacada
         """
         try:
             if not self.wp_client:
@@ -456,24 +497,30 @@ RESPONDE ÚNICAMENTE CON EL JSON, SIN TEXTO ADICIONAL."""
 
     async def publish_seo_article_to_wordpress(self, article_data: Dict, image_url: Optional[str] = None, image_id: Optional[int] = None) -> Tuple[Optional[int], Optional[str]]:
         """
-        Publica artículo SEO completo en WordPress
-        MEJORADO v2.0.3: Configura imagen destacada automáticamente
+        CORREGIDO v2.0.4: Publica artículo SEO completo en WordPress con validaciones
         """
         try:
             if not self.wp_client:
+                logger.error("❌ Cliente WordPress no disponible")
+                return None, None
+            
+            # Validar que article_data tenga las claves necesarias
+            if not article_data or 'titulo_h1' not in article_data:
+                logger.error("❌ Datos de artículo inválidos o incompletos")
                 return None, None
             
             # Crear post
             post = wordpress_xmlrpc.WordPressPost()
-            post.title = article_data['titulo_h1']
-            post.slug = article_data['slug_url']
+            post.title = article_data.get('titulo_h1', 'Artículo Sin Título')
+            post.slug = article_data.get('slug_url', 'articulo-sin-slug')
             
             # Contenido completo con imagen si existe
             content = ""
             if image_url:
-                content += f'<img src="{image_url}" alt="{article_data["titulo_h1"]}" class="wp-image-featured" style="width:100%; height:auto; margin-bottom: 20px;">\n\n'
+                alt_text = article_data.get('titulo_h1', 'Imagen del artículo')
+                content += f'<img src="{image_url}" alt="{alt_text}" class="wp-image-featured" style="width:100%; height:auto; margin-bottom: 20px;">\n\n'
             
-            content += article_data['contenido_html']
+            content += article_data.get('contenido_html', '<p>Contenido no disponible</p>')
             
             # Agregar enlaces si no están en el contenido
             if article_data.get('enlace_interno') and article_data['enlace_interno'] not in content:
@@ -515,7 +562,7 @@ RESPONDE ÚNICAMENTE CON EL JSON, SIN TEXTO ADICIONAL."""
                 }
             
             if article_data.get('categoria'):
-                # NUEVO v2.0.3: Validar que la categoría existe en WordPress
+                # NUEVO v2.0.4: Validar que la categoría existe en WordPress
                 validated_category = self._validate_category(article_data['categoria'])
                 post.terms_names = post.terms_names or {}
                 post.terms_names['category'] = [validated_category]
@@ -523,25 +570,25 @@ RESPONDE ÚNICAMENTE CON EL JSON, SIN TEXTO ADICIONAL."""
             # Publicar post
             post_id = self.wp_client.call(posts.NewPost(post))
             
-            # NUEVO v2.0.3: Configurar imagen destacada si está disponible
+            # NUEVO v2.0.4: Configurar imagen destacada si está disponible
             if image_id and post_id:
                 try:
                     # Configurar imagen destacada usando el ID del attachment
-                    self.wp_client.call(posts.SetPostThumbnail(post_id, image_id))
+                    self.wp_client.call(SetPostThumbnail(post_id, image_id))
                     logger.info(f"✅ Imagen destacada configurada - Post ID: {post_id}, Image ID: {image_id}")
                 except Exception as e:
                     logger.warning(f"⚠️ Error configurando imagen destacada: {e}")
             
             logger.info(f"✅ Artículo SEO publicado exitosamente - ID: {post_id}")
-            return post_id, article_data['titulo_h1']
+            return post_id, article_data.get('titulo_h1', 'Artículo publicado')
             
         except Exception as e:
-            logger.error(f"❌ Error publicando en WordPress: {e}")
+            logger.error(f"❌ Error publicando artículo: {e}")
             return None, None
     
     async def send_welcome_message(self, chat_id: int):
         """Envía mensaje de bienvenida con instrucciones"""
-        welcome_text = f"""🤖 **Bot SEO Periodístico v2.0.3 Activado**
+        welcome_text = f"""🤖 **Bot SEO Periodístico v2.0.4 Activado**
 
 📰 **Funcionalidades:**
 • 📝 **Solo texto** - Artículo SEO de {self.min_word_count}+ palabras
@@ -663,8 +710,7 @@ Envía tu crónica o noticia (texto, imagen, audio)"""
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
-        Manejador principal de mensajes de Telegram
-        Procesa texto, imágenes y audio para generar artículos SEO
+        CORREGIDO v2.0.4: Manejador principal de mensajes con flujo robusto
         """
         try:
             message = update.message
@@ -711,18 +757,25 @@ Envía tu crónica o noticia (texto, imagen, audio)"""
             combined_text = f"{content_data['text_content']} {content_data['voice_transcript']}".strip()
             has_image = bool(content_data['image_data'])
             
-            # Generar artículo SEO
+            # CORREGIDO v2.0.4: Flujo de generación robusto
             await self.update_processing_message(chat_id, processing_msg_id, "generating") 
-            prompt_data = self.generate_seo_article(combined_text, has_image)
             
+            # Generar prompt
+            prompt_data = self.generate_seo_prompt(combined_text, has_image)
+            
+            # Generar artículo
             if 'error' in prompt_data:
+                # Si hay error en el prompt, usar fallback directamente
+                logger.warning(f"⚠️ Error en prompt: {prompt_data['error']}")
                 article_data = self._generate_fallback_article(combined_text)
             else:
-                ai_result = await self.generate_article_with_ai(prompt_data)
-                if 'error' in ai_result:
-                    article_data = self._generate_fallback_article(combined_text)
-                else:
-                    article_data = ai_result
+                # Intentar generar con IA
+                article_data = await self.generate_article_with_ai(prompt_data, combined_text)
+            
+            # Validar que el artículo esté completo
+            if not article_data or 'titulo_h1' not in article_data:
+                logger.error("❌ Artículo generado inválido, usando fallback final")
+                article_data = self._generate_fallback_article(combined_text)
             
             # Subir imagen si existe
             image_url, image_id = None, None
@@ -753,7 +806,7 @@ Envía tu crónica o noticia (texto, imagen, audio)"""
                 await self.send_result_message(chat_id, False, {'error': 'Error publicando en WordPress'})
                 
         except Exception as e:
-            logger.error(f"Error manejando mensaje: {e}")
+            logger.error(f"❌ Error crítico manejando mensaje: {e}")
             try:
                 await update.message.reply_text(f"❌ **Error interno del sistema**\n\nDetalle: {str(e)[:100]}...\n\nIntenta nuevamente en unos momentos.")
             except:
@@ -928,7 +981,7 @@ async def main():
             return
         
         # Iniciar bot
-        logger.info("🚀 Iniciando Sistema SEO Bot v2.0.3...")
+        logger.info("🚀 Iniciando Sistema SEO Bot v2.0.4...")
         await bot.start_bot()
         
     except KeyboardInterrupt:
