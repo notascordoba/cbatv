@@ -55,8 +55,8 @@ def sanitize_filename(title):
     # Eliminar guiones al inicio y final
     title = title.strip('-')
     # Limitar longitud
-    if len(title) > 50:
-        title = title[:50].rstrip('-')
+    if len(title) > 60:
+        title = title[:60].rstrip('-')
     
     return title
 
@@ -64,36 +64,37 @@ def generate_seo_article(caption, image_description):
     """Genera un artículo SEO optimizado usando Groq"""
     try:
         prompt = f"""
-Eres un periodista experto en SEO y marketing de contenidos. Tu tarea es crear un artículo periodístico completo y profesional basado en esta información original y exclusiva:
+Sos un redactor SEO experto especializado en periodismo argentino. Tu tarea es crear un artículo periodístico completo y profesional en español rioplatense basado en esta información EXCLUSIVA:
 
 INFORMACIÓN PROPORCIONADA (FUENTE ORIGINAL):
 - Descripción del periodista: {caption}
 - Descripción de la imagen: {image_description}
 
 INSTRUCCIONES CRÍTICAS:
-1. Esta es información EXCLUSIVA proporcionada por un periodista - NO agregues enlaces externos a otras fuentes
-2. Crea contenido ORIGINAL de mínimo 500 palabras
-3. Analiza y extrae la palabra clave principal del contenido
-4. Genera tags ESPECÍFICOS basados en nombres, lugares, temas concretos del artículo
-5. El slug debe ser una frase descriptiva con la palabra clave
-6. Estructura el contenido con H2, H3, y listas cuando sea apropiado
-7. Incluye interlinking interno únicamente
+1. Esta es información EXCLUSIVA de un periodista argentino - NO agregues enlaces externos
+2. Redactá en español argentino, tono periodístico profesional
+3. Contenido ORIGINAL de mínimo 500 palabras
+4. Identificá la palabra clave principal del tema específico
+5. Generá tags ESPECÍFICOS del contenido (nombres propios, lugares, temas exactos)
+6. El slug debe ser el título sanitizado para URL
+7. Estructura con H2, H3, listas cuando corresponda
+8. SIN enlaces externos - solo contenido propio
 
-ESTRUCTURA REQUERIDA:
-- Introducción atractiva
-- Desarrollo del tema principal con subtemas
-- Análisis y contexto
-- Conclusión
-- Usar H2 para secciones principales, H3 para subsecciones
-- Incluir listas numeradas o con viñetas cuando sea apropiado
+ESTRUCTURA PERIODÍSTICA:
+- Lead atractivo con los datos más importantes
+- Desarrollo del tema con subtemas específicos
+- Contexto y análisis argentino
+- Cierre contundente
+- H2 para secciones principales, H3 para detalles
+- Listas cuando sea apropiado para organizar información
 
-RESPONDE ÚNICAMENTE CON UN JSON VÁLIDO CON ESTA ESTRUCTURA EXACTA:
+RESPONDE ÚNICAMENTE CON UN JSON VÁLIDO:
 {{
-    "keyword_principal": "palabra clave específica extraída del contenido",
-    "titulo_h1": "Título periodístico atractivo de 30-70 caracteres con keyword",
+    "keyword_principal": "palabra clave específica del tema principal",
+    "titulo_h1": "Título periodístico argentino de 30-70 caracteres con keyword",
     "meta_descripcion": "Meta descripción periodística de máximo 130 caracteres con keyword",
-    "slug_url": "frase-descriptiva-con-palabra-clave-principal",
-    "contenido_html": "Artículo completo en HTML de MÍNIMO 500 palabras con estructura H2, H3, listas. Incluye introducción, desarrollo del tema, análisis, contexto y conclusión. Solo interlinking interno con enlaces como /categoria/politica o /tag/economia. NO enlaces externos.",
+    "slug_url": "titulo-sanitizado-para-url",
+    "contenido_html": "Artículo completo en HTML de MÍNIMO 500 palabras con estructura H2, H3, listas. Estilo periodístico argentino. SOLO contenido propio, SIN enlaces externos de ningún tipo.",
     "tags": ["tag-especifico-1", "tag-especifico-2", "tag-especifico-3", "tag-especifico-4", "tag-especifico-5"],
     "categoria": "Categoría específica del artículo",
     "datos_estructurados": {{
@@ -113,22 +114,26 @@ RESPONDE ÚNICAMENTE CON UN JSON VÁLIDO CON ESTA ESTRUCTURA EXACTA:
     }}
 }}
 
-EJEMPLOS DE TAGS ESPECÍFICOS (NO usar genéricos como "actualidad" o "noticias"):
-- Si habla de Milei: "javier-milei", "presidente-argentina", "la-libertad-avanza"
-- Si habla de fútbol: "boca-juniors", "lionel-messi", "copa-argentina"
-- Si habla de economía: "inflacion-argentina", "dolar-blue", "banco-central"
+EJEMPLOS DE TAGS ESPECÍFICOS (extraídos del contenido real):
+- Si es sobre Milei: "javier-milei", "casa-rosada", "la-libertad-avanza"
+- Si es deportes: "talleres-cordoba", "mario-kempes", "liga-profesional"
+- Si es economía: "inflacion-argentina", "banco-central", "luis-caputo"
 
-IMPORTANTE: Responde SOLO con el JSON, sin texto adicional antes o después.
+IMPORTANTE: 
+- Responde SOLO con el JSON válido
+- SIN enlaces externos en el contenido HTML
+- Tags específicos del tema, NO genéricos
+- Slug = título sanitizado
 """
 
         response = groq_client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "Eres un periodista experto en SEO. Respondes únicamente con JSON válido. Creas contenido original extenso sin enlaces externos."},
+                {"role": "system", "content": "Sos un redactor SEO argentino experto en periodismo. Respondes únicamente con JSON válido. Creás contenido original sin enlaces externos."},
                 {"role": "user", "content": prompt}
             ],
             model="llama-3.1-8b-instant",
             temperature=0.7,
-            max_tokens=3000  # Aumentado para contenido más extenso
+            max_tokens=3000
         )
         
         content = response.choices[0].message.content.strip()
@@ -139,7 +144,12 @@ IMPORTANTE: Responde SOLO con el JSON, sin texto adicional antes o después.
         if content.endswith('```'):
             content = content[:-3]
         
-        return json.loads(content)
+        article_data = json.loads(content)
+        
+        # FORZAR slug como título sanitizado
+        article_data['slug_url'] = sanitize_filename(article_data['titulo_h1'])
+        
+        return article_data
         
     except Exception as e:
         print(f"Error generando artículo SEO: {e}")
@@ -156,31 +166,34 @@ def upload_image_to_wordpress(image_url, filename="image.jpg", alt_text=""):
         data = {
             'name': filename,
             'type': 'image/jpeg',
-            'bits': response.content
+            'bits': response.content,
+            'overwrite': True
         }
         
         # Subir a WordPress
-        response = wp_client.call(UploadFile(data))
-        attachment_id = response['id']
-        image_url_uploaded = response['url']
+        upload_response = wp_client.call(UploadFile(data))
+        attachment_id = upload_response['id']
+        image_url_uploaded = upload_response['url']
         
-        # Establecer el texto alternativo como metadata del attachment en WordPress
+        # MEJORADO: Establecer el texto alternativo correctamente
         if alt_text and attachment_id:
             try:
-                # Obtener el post del attachment
-                attachment_post = wp_client.call(GetPost(attachment_id))
+                from wordpress_xmlrpc.methods import media
+                from wordpress_xmlrpc import WordPressPost
                 
-                # Establecer el alt text (en WordPress se guarda como excerpt para attachments)
-                attachment_post.excerpt = alt_text
+                # Crear un post para el attachment con alt text
+                attachment_post = WordPressPost()
+                attachment_post.id = attachment_id
+                attachment_post.post_excerpt = alt_text  # Alt text en WordPress
+                attachment_post.post_content = alt_text  # Descripción
                 
-                # Actualizar el attachment con el alt text
+                # Actualizar usando EditPost
                 wp_client.call(EditPost(attachment_id, attachment_post))
                 
-                print(f"✅ Alt text establecido: {alt_text}")
+                print(f"✅ Alt text establecido correctamente: {alt_text}")
                 
             except Exception as alt_error:
                 print(f"⚠️ Error estableciendo alt text: {alt_error}")
-                # No fallar por esto, la imagen ya se subió correctamente
         
         return image_url_uploaded, attachment_id
         
@@ -192,7 +205,7 @@ def publish_seo_article_to_wordpress(article_data, image_url, image_alt_text):
     """Publica el artículo SEO en WordPress con imagen destacada"""
     try:
         # Generar nombre de archivo SEO-friendly
-        filename = f"{sanitize_filename(article_data['titulo_h1'])}.jpg"
+        filename = f"{article_data['slug_url']}.jpg"
         
         # Subir imagen, establecer alt text y obtener attachment_id
         uploaded_image_url, attachment_id = upload_image_to_wordpress(image_url, filename, image_alt_text)
@@ -201,30 +214,28 @@ def publish_seo_article_to_wordpress(article_data, image_url, image_alt_text):
             return False
         
         # Crear el contenido del post con la imagen y alt text
-        content_with_image = f"""
-<img src="{uploaded_image_url}" alt="{image_alt_text}" style="width: 100%; height: auto; margin-bottom: 20px;" />
+        content_with_image = f"""<img src="{uploaded_image_url}" alt="{image_alt_text}" style="width: 100%; height: auto; margin-bottom: 20px;" />
 
 {article_data['contenido_html']}
 
 <!-- Datos Estructurados JSON-LD -->
 <script type="application/ld+json">
 {json.dumps(article_data['datos_estructurados'], ensure_ascii=False, indent=2)}
-</script>
-"""
+</script>"""
         
         # Crear el post
         post = WordPressPost()
         post.title = article_data['titulo_h1']
         post.content = content_with_image
-        post.post_status = 'draft'  # Cambiar a borrador
+        post.post_status = 'draft'
         post.excerpt = article_data['meta_descripcion']
-        post.slug = article_data['slug_url']  # Establecer slug personalizado
+        post.slug = article_data['slug_url']
         post.terms_names = {
             'post_tag': article_data['tags'],
             'category': [article_data['categoria']]
         }
         
-        # CRÍTICO: Asignar imagen destacada usando attachment_id (NO TOCAR)
+        # CRÍTICO: Asignar imagen destacada (NO TOCAR)
         if attachment_id:
             post.thumbnail = attachment_id
         
@@ -247,10 +258,10 @@ async def process_message_with_photo(update: Update):
         # Obtener el caption si existe
         caption = update.message.caption or "Imagen sin descripción"
         
-        # Generar descripción de la imagen (simulada)
-        image_description = f"Imagen enviada por Telegram con caption: {caption}"
+        # Generar descripción de la imagen
+        image_description = f"Imagen periodística con descripción: {caption}"
         
-        # Primero generar el artículo para obtener el título
+        # Generar el artículo
         article_data = generate_seo_article(caption, image_description)
         
         if not article_data:
@@ -264,21 +275,19 @@ async def process_message_with_photo(update: Update):
         result = publish_seo_article_to_wordpress(article_data, file.file_path, image_alt_text)
         
         if result:
-            response_message = f"""
-✅ **ARTÍCULO SEO v5.2.0 PUBLICADO** ✅
+            response_message = f"""✅ **ARTÍCULO SEO v5.2.1 PUBLICADO** ✅
 
 📝 **Título:** {article_data['titulo_h1']}
 🔑 **Keyword:** {article_data['keyword_principal']}
 🔗 **Slug:** {article_data['slug_url']}
-📄 **Meta Descripción:** {article_data['meta_descripcion']}
-🏷️ **Tags Específicos:** {', '.join(article_data['tags'])}
+📄 **Meta:** {article_data['meta_descripcion']}
+🏷️ **Tags:** {', '.join(article_data['tags'])}
 📂 **Categoría:** {article_data['categoria']}
-🖼️ **Imagen:** {image_alt_text}
-📊 **Estado:** Borrador (pendiente de revisión)
-📝 **Extensión:** Artículo extenso (+500 palabras)
+🖼️ **Alt Text:** {image_alt_text}
+📊 **Estado:** Borrador
+📝 **Estilo:** Periodismo argentino
 
-{result}
-"""
+{result}"""
         else:
             response_message = "❌ Error publicando el artículo en WordPress"
             
@@ -286,7 +295,7 @@ async def process_message_with_photo(update: Update):
         
     except Exception as e:
         print(f"Error procesando mensaje: {e}")
-        await update.message.reply_text(f"❌ Error procesando la imagen: {str(e)}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -295,19 +304,13 @@ def webhook():
         update_data = request.get_json()
         update = Update.de_json(update_data, telegram_app.bot)
         
-        # Verificar si el mensaje tiene foto
         if update.message and update.message.photo:
-            # Crear un nuevo event loop para manejar la función async
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            # Inicializar la aplicación antes de procesar
             loop.run_until_complete(initialize_application())
-            
-            # Procesar el mensaje
             loop.run_until_complete(process_message_with_photo(update))
             
-            # Cerrar el loop
             loop.close()
             
             return jsonify({"status": "success"})
@@ -321,9 +324,9 @@ def webhook():
 @app.route('/health', methods=['GET'])
 def health():
     """Endpoint de salud"""
-    return jsonify({"status": "healthy", "version": "5.2.0"})
+    return jsonify({"status": "healthy", "version": "5.2.1"})
 
 if __name__ == '__main__':
-    print("🚀 Bot SEO v5.2.0 iniciado...")
-    print("📸 Funcionalidades: SEO profesional + Contenido extenso + Tags específicos + Interlinking")
+    print("🚀 Bot SEO v5.2.1 iniciado...")
+    print("📰 Redacción SEO profesional argentina")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
