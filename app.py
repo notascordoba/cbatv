@@ -359,6 +359,17 @@ async def process_message_with_photo(update: Update, context: CallbackContext):
 application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 application.add_handler(MessageHandler(filters.PHOTO, process_message_with_photo))
 
+# Variable para controlar la inicialización
+app_initialized = False
+
+async def initialize_application():
+    """Inicializa la aplicación de Telegram"""
+    global app_initialized
+    if not app_initialized:
+        await application.initialize()
+        app_initialized = True
+        logger.info("Application de Telegram inicializada")
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Webhook para recibir actualizaciones de Telegram"""
@@ -372,6 +383,9 @@ def webhook():
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+        
+        # Inicializar la aplicación si no está inicializada
+        loop.run_until_complete(initialize_application())
         
         # Procesar la actualización
         loop.run_until_complete(application.process_update(update))
