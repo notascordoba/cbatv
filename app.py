@@ -16,10 +16,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# VERSIÓN FINAL v6.0.0 - POST-DEBUG CONFIRMADO
+# VERSIÓN v6.0.1 - DEBUG MEJORADO
 # ==========================================
-logger.critical("🎯 === VERSIÓN FINAL v6.0.0 - DEPLOYMENT CONFIRMADO === 🎯")
-logger.critical("🎯 === PERIODISMO REAL + METADATOS CORRECTOS === 🎯")
+logger.critical("🔥 === VERSIÓN v6.0.1 - DEBUG COMPLETO === 🔥")
+logger.critical("🔥 === RESPUESTA GROQ + DIAGNÓSTICO WORDPRESS === 🔥")
 
 app = Flask(__name__)
 
@@ -33,7 +33,7 @@ WP_PASSWORD = os.getenv('WORDPRESS_PASSWORD')
 # Cliente Groq
 client = Groq(api_key=GROQ_API_KEY)
 
-logger.info(f"🎯 v6.0.0 configurado para WordPress: {WP_URL}")
+logger.info(f"🔥 v6.0.1 configurado para WordPress: {WP_URL}")
 
 def safe_filename(text: str) -> str:
     """Crea un nombre de archivo seguro desde un texto"""
@@ -42,8 +42,8 @@ def safe_filename(text: str) -> str:
     return safe[:50] if safe else 'imagen'
 
 def extract_json_robust(text: str) -> Optional[Dict[str, Any]]:
-    """Extracción JSON ultra-robusta"""
-    logger.info("🎯 v6.0.0: Extrayendo JSON con estrategias múltiples")
+    """Extracción JSON ultra-robusta con logging detallado"""
+    logger.info("🔥 v6.0.1: Extrayendo JSON con estrategias múltiples")
     
     # Limpiar texto primero
     text = text.strip()
@@ -51,30 +51,30 @@ def extract_json_robust(text: str) -> Optional[Dict[str, Any]]:
     # Estrategia 1: JSON directo
     try:
         result = json.loads(text)
-        logger.info("🎯 JSON directo exitoso")
+        logger.critical("🔥 ÉXITO: JSON directo funcionó")
         return result
-    except:
-        pass
+    except Exception as e:
+        logger.info(f"🔥 JSON directo falló: {e}")
     
     # Estrategia 2: Buscar entre ```json y ```
     json_match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
     if json_match:
         try:
             result = json.loads(json_match.group(1).strip())
-            logger.info("🎯 JSON con markdown exitoso")
+            logger.critical("🔥 ÉXITO: JSON con markdown funcionó")
             return result
-        except:
-            pass
+        except Exception as e:
+            logger.info(f"🔥 JSON markdown falló: {e}")
     
     # Estrategia 3: Buscar estructura { ... }
     brace_match = re.search(r'\{.*\}', text, re.DOTALL)
     if brace_match:
         try:
             result = json.loads(brace_match.group(0))
-            logger.info("🎯 JSON con braces exitoso")
+            logger.critical("🔥 ÉXITO: JSON con braces funcionó")
             return result
-        except:
-            pass
+        except Exception as e:
+            logger.info(f"🔥 JSON braces falló: {e}")
     
     # Estrategia 4: Buscar campos individualmente y construir JSON
     try:
@@ -96,17 +96,17 @@ def extract_json_robust(text: str) -> Optional[Dict[str, Any]]:
                 tags = [tag.strip(' "') for tag in tags_str.split(',')]
                 result["tags"] = tags
             
-            logger.info("🎯 JSON construido manualmente exitoso")
+            logger.critical("🔥 ÉXITO: JSON construido manualmente")
             return result
-    except:
-        pass
+    except Exception as e:
+        logger.info(f"🔥 JSON manual falló: {e}")
     
-    logger.warning("🎯 TODAS las estrategias JSON fallaron")
+    logger.critical("🔥 TODAS las estrategias JSON fallaron")
     return None
 
 def generate_article_groq(caption: str) -> Dict[str, Any]:
     """Genera artículo con Groq usando prompt periodístico optimizado"""
-    logger.critical(f"🎯 v6.0.0: GENERANDO ARTÍCULO PERIODÍSTICO")
+    logger.critical(f"🔥 v6.0.1: GENERANDO ARTÍCULO PERIODÍSTICO")
     logger.info(f"Caption: {caption[:100]}...")
     
     # Prompt super específico para periodismo argentino
@@ -140,12 +140,13 @@ NUNCA escribas:
 - "La importancia de la participación argentina..."
 - "Los analistas esperan que..."
 - "Es fundamental entender que..."
-"""
+
+RESPONDE ÚNICAMENTE CON EL JSON, SIN TEXTO ADICIONAL."""
 
     user_prompt = f"Escribe un artículo periodístico basado en: {caption}"
     
     try:
-        logger.info("🎯 Enviando request a Groq...")
+        logger.info("🔥 Enviando request a Groq...")
         
         completion = client.chat.completions.create(
             messages=[
@@ -158,7 +159,10 @@ NUNCA escribas:
         )
         
         ai_response = completion.choices[0].message.content
-        logger.info(f"🎯 Respuesta Groq recibida: {len(ai_response)} caracteres")
+        logger.info(f"🔥 Respuesta Groq recibida: {len(ai_response)} caracteres")
+        logger.critical(f"🔥 RESPUESTA GROQ COMPLETA:\n{ai_response}")
+        logger.critical(f"🔥 PRIMEROS 500 CHARS: {ai_response[:500]}")
+        logger.critical(f"🔥 ÚLTIMOS 500 CHARS: {ai_response[-500:]}")
         
         # Extraer JSON
         parsed = extract_json_robust(ai_response)
@@ -177,7 +181,7 @@ NUNCA escribas:
             is_generic = any(phrase in content_lower for phrase in generic_phrases)
             
             if is_generic:
-                logger.warning("🎯 Contenido genérico detectado, rechazando")
+                logger.warning("🔥 Contenido genérico detectado, rechazando")
                 raise ValueError("Contenido genérico")
             
             # Asegurar que tenga todos los campos
@@ -188,15 +192,18 @@ NUNCA escribas:
             if "descripcion" not in parsed:
                 parsed["descripcion"] = f"{parsed['titulo'][:150]}..."
             
-            logger.critical("🎯 ARTÍCULO ESPECÍFICO GENERADO EXITOSAMENTE")
+            logger.critical("🔥 ARTÍCULO ESPECÍFICO GENERADO EXITOSAMENTE")
+            logger.critical(f"🔥 TÍTULO EXTRAÍDO: {parsed['titulo']}")
+            logger.critical(f"🔥 SLUG EXTRAÍDO: {parsed['slug']}")
+            logger.critical(f"🔥 TAGS EXTRAÍDOS: {parsed['tags']}")
             return parsed
         else:
-            logger.warning("🎯 JSON inválido o incompleto")
+            logger.warning("🔥 JSON inválido o incompleto")
             raise ValueError("JSON inválido")
             
     except Exception as e:
-        logger.error(f"🎯 Error en Groq: {e}")
-        logger.critical("🎯 ACTIVANDO SISTEMA FALLBACK")
+        logger.error(f"🔥 Error en Groq: {e}")
+        logger.critical("🔥 ACTIVANDO SISTEMA FALLBACK")
         
         # Fallback inteligente
         words = caption.split()
@@ -217,17 +224,20 @@ NUNCA escribas:
 
 async def upload_image_wordpress(image_url: str, alt_text: str) -> Tuple[Optional[str], Optional[int]]:
     """Sube imagen a WordPress con alt text optimizado"""
-    logger.critical(f"🎯 v6.0.0: SUBIENDO IMAGEN - ALT TEXT: {alt_text}")
+    logger.critical(f"🔥 v6.0.1: SUBIENDO IMAGEN - ALT TEXT: {alt_text}")
+    logger.critical(f"🔥 URL de imagen original: {image_url}")
     
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(image_url) as response:
                 if response.status != 200:
-                    logger.error(f"🎯 Error descargando imagen: {response.status}")
+                    logger.error(f"🔥 Error descargando imagen: {response.status}")
                     return None, None
                 
                 image_data = await response.read()
+                logger.info(f"🔥 Imagen descargada: {len(image_data)} bytes")
                 filename = f"{safe_filename(alt_text)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                logger.info(f"🔥 Nombre archivo: {filename}")
                 
                 # Subir a WordPress
                 wp_upload_url = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/media"
@@ -236,22 +246,40 @@ async def upload_image_wordpress(image_url: str, alt_text: str) -> Tuple[Optiona
                     'Content-Type': 'image/jpeg'
                 }
                 
+                logger.critical(f"🔥 INTENTANDO SUBIR A: {wp_upload_url}")
+                logger.critical(f"🔥 USUARIO WP: {WP_USERNAME}")
+                logger.critical(f"🔥 PASSWORD LENGTH: {len(WP_PASSWORD) if WP_PASSWORD else 'NO_PASSWORD'}")
+                
                 upload_response = requests.post(
                     wp_upload_url,
                     headers=headers,
                     data=image_data,
-                    auth=(WP_USERNAME, WP_PASSWORD)
+                    auth=(WP_USERNAME, WP_PASSWORD),
+                    timeout=30
                 )
                 
+                logger.critical(f"🔥 RESPUESTA UPLOAD: {upload_response.status_code}")
+                logger.critical(f"🔥 RESPUESTA HEADERS: {dict(upload_response.headers)}")
+                
                 if upload_response.status_code != 201:
-                    logger.error(f"🎯 Error subiendo imagen: {upload_response.status_code}")
+                    logger.error(f"🔥 Error subiendo imagen: {upload_response.status_code}")
+                    logger.critical(f"🔥 RESPUESTA WP COMPLETA: {upload_response.text}")
+                    logger.critical(f"🔥 REQUEST HEADERS ENVIADOS: {headers}")
+                    
+                    # Intentar diagnóstico adicional
+                    if upload_response.status_code == 403:
+                        logger.critical("🔥 ERROR 403: Problema de autenticación")
+                        logger.critical("🔥 Verificar credenciales WordPress en variables de entorno")
+                    elif upload_response.status_code == 401:
+                        logger.critical("🔥 ERROR 401: Credenciales inválidos")
+                    
                     return None, None
                 
                 upload_data = upload_response.json()
                 wp_image_url = upload_data['source_url']
                 image_id = upload_data['id']
                 
-                logger.info(f"🎯 Imagen subida: {wp_image_url} (ID: {image_id})")
+                logger.critical(f"🔥 IMAGEN SUBIDA EXITOSAMENTE: {wp_image_url} (ID: {image_id})")
                 
                 # Configurar alt text con método POST (más confiable)
                 alt_update_url = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/media/{image_id}"
@@ -262,6 +290,8 @@ async def upload_image_wordpress(image_url: str, alt_text: str) -> Tuple[Optiona
                     'caption': alt_text
                 }
                 
+                logger.critical(f"🔥 CONFIGURANDO ALT TEXT: {alt_update_url}")
+                
                 alt_response = requests.post(
                     alt_update_url,
                     json=alt_data,
@@ -269,19 +299,22 @@ async def upload_image_wordpress(image_url: str, alt_text: str) -> Tuple[Optiona
                 )
                 
                 if alt_response.status_code == 200:
-                    logger.critical(f"🎯 ALT TEXT CONFIGURADO: {alt_text}")
+                    logger.critical(f"🔥 ALT TEXT CONFIGURADO EXITOSAMENTE: {alt_text}")
                 else:
-                    logger.error(f"🎯 Error configurando alt text: {alt_response.status_code}")
+                    logger.error(f"🔥 Error configurando alt text: {alt_response.status_code}")
+                    logger.error(f"🔥 Respuesta alt text: {alt_response.text}")
                 
                 return wp_image_url, image_id
                 
     except Exception as e:
-        logger.error(f"🎯 Excepción subiendo imagen: {e}")
+        logger.critical(f"🔥 EXCEPCIÓN COMPLETA subiendo imagen: {e}")
+        import traceback
+        logger.critical(f"🔥 TRACEBACK: {traceback.format_exc()}")
         return None, None
 
 def create_wordpress_draft(article_data: Dict[str, Any], image_url: Optional[str], image_id: Optional[int]) -> Optional[int]:
     """Crea post borrador en WordPress"""
-    logger.critical(f"🎯 v6.0.0: CREANDO POST - {article_data['titulo']}")
+    logger.critical(f"🔥 v6.0.1: CREANDO POST - {article_data['titulo']}")
     
     try:
         # Preparar contenido HTML
@@ -300,11 +333,14 @@ def create_wordpress_draft(article_data: Dict[str, Any], image_url: Optional[str
             'excerpt': article_data.get('descripcion', ''),
         }
         
+        logger.critical(f"🔥 POST DATA: título={article_data['titulo']}, slug={article_data['slug']}")
+        
         # Agregar tags si existen
         if article_data.get('tags'):
             # Crear/obtener tags
             tag_ids = []
             for tag in article_data['tags']:
+                logger.info(f"🔥 Procesando tag: {tag}")
                 tag_response = requests.post(
                     f"{WP_URL.rstrip('/')}/wp-json/wp/v2/tags",
                     json={'name': tag},
@@ -313,17 +349,22 @@ def create_wordpress_draft(article_data: Dict[str, Any], image_url: Optional[str
                 if tag_response.status_code in [200, 201]:
                     tag_data = tag_response.json()
                     tag_ids.append(tag_data['id'])
+                    logger.info(f"🔥 Tag creado/encontrado: {tag} (ID: {tag_data['id']})")
+                else:
+                    logger.warning(f"🔥 Error procesando tag {tag}: {tag_response.status_code}")
             
             if tag_ids:
                 post_data['tags'] = tag_ids
+                logger.critical(f"🔥 TAGS IDs ASIGNADOS: {tag_ids}")
         
         # Configurar imagen destacada
         if image_id:
             post_data['featured_media'] = image_id
-            logger.info(f"🎯 Imagen destacada: ID {image_id}")
+            logger.critical(f"🔥 IMAGEN DESTACADA: ID {image_id}")
         
         # Crear post
         wp_posts_url = f"{WP_URL.rstrip('/')}/wp-json/wp/v2/posts"
+        logger.critical(f"🔥 CREANDO POST EN: {wp_posts_url}")
         
         response = requests.post(
             wp_posts_url,
@@ -331,44 +372,49 @@ def create_wordpress_draft(article_data: Dict[str, Any], image_url: Optional[str
             auth=(WP_USERNAME, WP_PASSWORD)
         )
         
+        logger.critical(f"🔥 RESPUESTA CREAR POST: {response.status_code}")
+        
         if response.status_code == 201:
             post_info = response.json()
             post_id = post_info['id']
-            logger.critical(f"🎯 POST CREADO EXITOSAMENTE: ID {post_id}")
+            logger.critical(f"🔥 POST CREADO EXITOSAMENTE: ID {post_id}")
             return post_id
         else:
-            logger.error(f"🎯 Error creando post: {response.status_code}")
-            logger.error(f"Response: {response.text}")
+            logger.error(f"🔥 Error creando post: {response.status_code}")
+            logger.critical(f"🔥 RESPUESTA POST COMPLETA: {response.text}")
             return None
             
     except Exception as e:
-        logger.error(f"🎯 Excepción creando post: {e}")
+        logger.critical(f"🔥 EXCEPCIÓN creando post: {e}")
+        import traceback
+        logger.critical(f"🔥 TRACEBACK POST: {traceback.format_exc()}")
         return None
 
 @app.route('/')
 def home():
     return jsonify({
-        "status": "🎯 Bot SEO v6.0.0 funcionando",
-        "version": "v6.0.0 FINAL",
+        "status": "🔥 Bot SEO v6.0.1 funcionando",
+        "version": "v6.0.1 DEBUG COMPLETO",
         "features": [
-            "Periodismo real post-debug",
-            "Metadatos específicos",
-            "Alt text optimizado",
-            "Deployment confirmado"
+            "Logging detallado Groq",
+            "Diagnóstico WordPress",
+            "Debugging extremo",
+            "Traceback completo"
         ]
     })
 
 @app.route('/health')
 def health():
     return jsonify({
-        "version": "v6.0.0",
-        "status": "FINAL FUNCIONANDO",
-        "deployment": "CONFIRMADO"
+        "version": "v6.0.1",
+        "status": "DEBUG COMPLETO",
+        "groq": "LOGGED",
+        "wordpress": "DIAGNOSED"
     })
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    logger.critical("🎯 v6.0.0: WEBHOOK RECIBIDO")
+    logger.critical("🔥 v6.0.1: WEBHOOK RECIBIDO")
     
     try:
         update = request.get_json()
@@ -378,13 +424,13 @@ def webhook():
             chat_id = message['chat']['id']
             
             if 'photo' in message and 'caption' in message:
-                logger.critical("🎯 v6.0.0: PROCESANDO FOTO + CAPTION")
+                logger.critical("🔥 v6.0.1: PROCESANDO FOTO + CAPTION")
                 
                 photo = message['photo'][-1]
                 file_id = photo['file_id']
                 caption = message['caption']
                 
-                logger.info(f"🎯 Caption: {caption[:100]}...")
+                logger.info(f"🔥 Caption: {caption[:100]}...")
                 
                 # Obtener URL de la imagen
                 file_info_response = requests.get(
@@ -409,35 +455,54 @@ def webhook():
                         post_id = create_wordpress_draft(article_data, wp_image_url, image_id)
                         
                         if post_id:
-                            logger.critical(f"🎯 ÉXITO TOTAL v6.0.0: POST {post_id}")
+                            logger.critical(f"🔥 ÉXITO TOTAL v6.0.1: POST {post_id}")
                             
                             # Enviar confirmación
                             requests.post(
                                 f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
                                 json={
                                     'chat_id': chat_id,
-                                    'text': f"🎯 ¡Artículo v6.0.0 creado!\n\n"
+                                    'text': f"🔥 ¡Artículo v6.0.1 creado!\n\n"
                                            f"📰 {article_data['titulo']}\n"
                                            f"🔗 {article_data['slug']}\n"
                                            f"🏷️ {', '.join(article_data['tags'][:3])}\n"
                                            f"📝 Post ID: {post_id}\n"
-                                           f"📊 Estado: BORRADOR"
+                                           f"📊 Estado: BORRADOR\n"
+                                           f"🔥 DEBUG: Logs completos disponibles"
                                 }
                             )
                         else:
-                            logger.error("🎯 Error creando post")
+                            logger.error("🔥 Error creando post")
+                            # Enviar notificación de error
+                            requests.post(
+                                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                                json={
+                                    'chat_id': chat_id,
+                                    'text': "🔥 v6.0.1: Error creando post, pero artículo generado. Ver logs."
+                                }
+                            )
                     else:
-                        logger.error("🎯 Error subiendo imagen")
+                        logger.error("🔥 Error subiendo imagen")
+                        # Enviar notificación de error de imagen
+                        requests.post(
+                            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                            json={
+                                'chat_id': chat_id,
+                                'text': "🔥 v6.0.1: Error subiendo imagen a WordPress. Ver logs para diagnóstico."
+                            }
+                        )
                 else:
-                    logger.error("🎯 Error obteniendo archivo")
+                    logger.error("🔥 Error obteniendo archivo Telegram")
             else:
-                logger.info("🎯 Mensaje sin foto+caption")
+                logger.info("🔥 Mensaje sin foto+caption")
         
     except Exception as e:
-        logger.critical(f"🎯 ERROR CRÍTICO v6.0.0: {e}")
+        logger.critical(f"🔥 ERROR CRÍTICO v6.0.1: {e}")
+        import traceback
+        logger.critical(f"🔥 TRACEBACK WEBHOOK: {traceback.format_exc()}")
     
     return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
-    logger.critical("🎯 v6.0.0 LISTA PARA FUNCIONAR")
+    logger.critical("🔥 v6.0.1 LISTA PARA DEBUG COMPLETO")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
