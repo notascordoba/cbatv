@@ -27,10 +27,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# VERSIÓN v6.1.0 - VOLVIENDO A XML-RPC QUE FUNCIONABA
+# VERSIÓN v6.1.1 - XML-RPC + MODELO GROQ ACTUALIZADO
 # ==========================================
-logger.critical("🔄 === VERSIÓN v6.1.0 - VOLVIENDO A XML-RPC === 🔄")
-logger.critical("🔄 === MÉTODO ORIGINAL QUE FUNCIONABA === 🔄")
+logger.critical("🚀 === VERSIÓN v6.1.1 - XML-RPC + MODELO ACTUALIZADO === 🚀")
+logger.critical("🚀 === SOLUCIÓN COMPLETA Y DEFINITIVA === 🚀")
 
 app = Flask(__name__)
 
@@ -53,13 +53,13 @@ if WP_URL and WP_USERNAME and WP_PASSWORD:
         if not xmlrpc_url.endswith('/xmlrpc.php'):
             xmlrpc_url = f"{xmlrpc_url}/xmlrpc.php"
         
-        logger.critical(f"🔄 Conectando a XML-RPC: {xmlrpc_url}")
-        logger.critical(f"🔄 Usuario: {WP_USERNAME}")
+        logger.critical(f"🚀 Conectando a XML-RPC: {xmlrpc_url}")
+        logger.critical(f"🚀 Usuario: {WP_USERNAME}")
         
         wp_client = Client(xmlrpc_url, WP_USERNAME, WP_PASSWORD)
-        logger.critical("🔄 ✅ Cliente WordPress XML-RPC configurado correctamente")
+        logger.critical("🚀 ✅ Cliente WordPress XML-RPC configurado correctamente")
     except Exception as e:
-        logger.error(f"🔄 ❌ Error configurando WordPress: {e}")
+        logger.error(f"🚀 ❌ Error configurando WordPress: {e}")
 
 def safe_filename(text: str) -> str:
     """Crea un nombre de archivo seguro desde un texto"""
@@ -69,14 +69,14 @@ def safe_filename(text: str) -> str:
 
 def extract_json_robust(text: str) -> Optional[Dict[str, Any]]:
     """Extracción JSON robusta"""
-    logger.info("🔄 Extrayendo JSON con estrategias múltiples")
+    logger.info("🚀 Extrayendo JSON con estrategias múltiples")
     
     text = text.strip()
     
     # Estrategia 1: JSON directo
     try:
         result = json.loads(text)
-        logger.info("🔄 JSON directo exitoso")
+        logger.info("🚀 JSON directo exitoso")
         return result
     except:
         pass
@@ -86,7 +86,7 @@ def extract_json_robust(text: str) -> Optional[Dict[str, Any]]:
     if json_match:
         try:
             result = json.loads(json_match.group(1).strip())
-            logger.info("🔄 JSON con markdown exitoso")
+            logger.info("🚀 JSON con markdown exitoso")
             return result
         except:
             pass
@@ -96,12 +96,12 @@ def extract_json_robust(text: str) -> Optional[Dict[str, Any]]:
     if brace_match:
         try:
             result = json.loads(brace_match.group(0))
-            logger.info("🔄 JSON con braces exitoso")
+            logger.info("🚀 JSON con braces exitoso")
             return result
         except:
             pass
     
-    logger.error("🔄 ❌ Todas las estrategias JSON fallaron")
+    logger.error("🚀 ❌ Todas las estrategias JSON fallaron")
     return None
 
 async def generate_seo_content(caption: str, image_url: str) -> Optional[Dict[str, Any]]:
@@ -131,40 +131,42 @@ IMPORTANTE:
 """
 
     try:
-        logger.info("🔄 Enviando request a Groq...")
+        logger.info("🚀 Enviando request a Groq...")
         
         completion = client.chat.completions.create(
-            model="llama3-groq-70b-8192-tool-use-preview",
+            model="llama3-70b-8192",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
             max_tokens=2048
         )
         
         response_text = completion.choices[0].message.content
-        logger.info(f"🔄 Respuesta Groq recibida: {len(response_text)} caracteres")
+        logger.info(f"🚀 Respuesta Groq recibida: {len(response_text)} caracteres")
+        logger.critical(f"🚀 RESPUESTA GROQ COMPLETA: {response_text[:500]}...")
         
         # Extraer JSON
         json_data = extract_json_robust(response_text)
         
         if json_data:
-            logger.critical("🔄 ✅ JSON extraído correctamente")
+            logger.critical("🚀 ✅ JSON extraído correctamente")
+            logger.critical(f"🚀 Título generado: {json_data.get('titulo', 'NO_TITULO')}")
             return json_data
         else:
-            logger.error("🔄 ❌ No se pudo extraer JSON válido")
+            logger.error("🚀 ❌ No se pudo extraer JSON válido")
             return None
             
     except Exception as e:
-        logger.error(f"🔄 ❌ Error con Groq: {e}")
+        logger.error(f"🚀 ❌ Error con Groq: {e}")
         return None
 
 async def upload_image_wordpress_xmlrpc(image_url: str, alt_text: str, filename: str) -> Tuple[Optional[str], Optional[int]]:
     """Sube imagen a WordPress usando XML-RPC (método original)"""
-    logger.critical(f"🔄 SUBIENDO IMAGEN VÍA XML-RPC")
-    logger.critical(f"🔄 Alt text: {alt_text}")
-    logger.critical(f"🔄 Filename: {filename}")
+    logger.critical(f"🚀 SUBIENDO IMAGEN VÍA XML-RPC")
+    logger.critical(f"🚀 Alt text: {alt_text}")
+    logger.critical(f"🚀 Filename: {filename}")
     
     if not wp_client:
-        logger.error("🔄 ❌ Cliente WordPress no disponible")
+        logger.error("🚀 ❌ Cliente WordPress no disponible")
         return None, None
     
     try:
@@ -172,11 +174,11 @@ async def upload_image_wordpress_xmlrpc(image_url: str, alt_text: str, filename:
         async with aiohttp.ClientSession() as session:
             async with session.get(image_url) as response:
                 if response.status != 200:
-                    logger.error(f"🔄 ❌ Error descargando imagen: {response.status}")
+                    logger.error(f"🚀 ❌ Error descargando imagen: {response.status}")
                     return None, None
                 
                 image_data = await response.read()
-                logger.info(f"🔄 Imagen descargada: {len(image_data)} bytes")
+                logger.info(f"🚀 Imagen descargada: {len(image_data)} bytes")
                 
                 # Preparar datos para WordPress XML-RPC
                 data = {
@@ -185,28 +187,29 @@ async def upload_image_wordpress_xmlrpc(image_url: str, alt_text: str, filename:
                     'bits': image_data
                 }
                 
-                logger.critical("🔄 Subiendo vía XML-RPC...")
+                logger.critical("🚀 Subiendo vía XML-RPC...")
                 
                 # Subir usando XML-RPC (método original)
                 response = wp_client.call(media.UploadFile(data))
                 
                 if response and 'url' in response:
-                    logger.critical(f"🔄 ✅ IMAGEN SUBIDA CORRECTAMENTE: {response['url']}")
+                    logger.critical(f"🚀 ✅ IMAGEN SUBIDA CORRECTAMENTE: {response['url']}")
                     return response['url'], response.get('id')
                 else:
-                    logger.error("🔄 ❌ Respuesta inválida de WordPress XML-RPC")
+                    logger.error("🚀 ❌ Respuesta inválida de WordPress XML-RPC")
+                    logger.critical(f"🚀 Respuesta completa: {response}")
                     return None, None
                 
     except Exception as e:
-        logger.error(f"🔄 ❌ Error subiendo imagen vía XML-RPC: {e}")
+        logger.error(f"🚀 ❌ Error subiendo imagen vía XML-RPC: {e}")
         return None, None
 
 async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optional[str] = None) -> Tuple[Optional[int], Optional[str]]:
     """Crea post en WordPress usando XML-RPC"""
-    logger.critical("🔄 Creando post en WordPress vía XML-RPC")
+    logger.critical("🚀 Creando post en WordPress vía XML-RPC")
     
     if not wp_client:
-        logger.error("🔄 ❌ Cliente WordPress no disponible")
+        logger.error("🚀 ❌ Cliente WordPress no disponible")
         return None, None
     
     try:
@@ -232,26 +235,32 @@ async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optiona
         # Publicar
         post.post_status = 'publish'
         
-        logger.critical("🔄 Publicando post...")
+        logger.critical("🚀 Publicando post...")
+        logger.critical(f"🚀 Título: {post.title}")
+        logger.critical(f"🚀 Slug: {post.slug}")
+        logger.critical(f"🚀 Tags: {article_data.get('tags', [])}")
+        
         post_id = wp_client.call(posts.NewPost(post))
         
         if post_id:
             post_url = f"{WP_URL.rstrip('/')}/wp-admin/post.php?post={post_id}&action=edit"
-            logger.critical(f"🔄 ✅ POST CREADO: ID {post_id}")
-            logger.critical(f"🔄 ✅ URL EDICIÓN: {post_url}")
+            public_url = f"{WP_URL.rstrip('/')}/{post.slug}"
+            logger.critical(f"🚀 ✅ POST CREADO: ID {post_id}")
+            logger.critical(f"🚀 ✅ URL EDICIÓN: {post_url}")
+            logger.critical(f"🚀 ✅ URL PÚBLICA: {public_url}")
             return post_id, post_url
         else:
-            logger.error("🔄 ❌ Error creando post")
+            logger.error("🚀 ❌ Error creando post")
             return None, None
             
     except Exception as e:
-        logger.error(f"🔄 ❌ Error creando post: {e}")
+        logger.error(f"🚀 ❌ Error creando post: {e}")
         return None, None
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Webhook de Telegram mejorado"""
-    logger.critical("🔄 v6.1.0: WEBHOOK RECIBIDO")
+    logger.critical("🚀 v6.1.1: WEBHOOK RECIBIDO")
     
     try:
         data = request.get_json()
@@ -271,12 +280,12 @@ def webhook():
         return jsonify({'status': 'processing'}), 200
         
     except Exception as e:
-        logger.error(f"🔄 ❌ Error en webhook: {e}")
+        logger.error(f"🚀 ❌ Error en webhook: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 async def process_message(message):
     """Procesa mensaje de Telegram"""
-    logger.critical("🔄 Procesando mensaje...")
+    logger.critical("🚀 Procesando mensaje...")
     
     try:
         caption = message['caption']
@@ -291,20 +300,20 @@ async def process_message(message):
         file_data = file_response.json()
         
         if not file_data['ok']:
-            logger.error("🔄 ❌ Error obteniendo info del archivo")
+            logger.error("🚀 ❌ Error obteniendo info del archivo")
             return
         
         file_path = file_data['result']['file_path']
         image_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
         
-        logger.critical(f"🔄 Caption: {caption[:100]}...")
-        logger.critical(f"🔄 Image URL: {image_url}")
+        logger.critical(f"🚀 Caption: {caption[:100]}...")
+        logger.critical(f"🚀 Image URL: {image_url}")
         
         # Generar contenido SEO
         article_data = await generate_seo_content(caption, image_url)
         
         if not article_data:
-            logger.error("🔄 ❌ No se pudo generar contenido")
+            logger.error("🚀 ❌ No se pudo generar contenido")
             return
         
         # Subir imagen
@@ -316,31 +325,32 @@ async def process_message(message):
         )
         
         if not wp_image_url:
-            logger.error("🔄 ❌ Error subiendo imagen")
+            logger.error("🚀 ❌ Error subiendo imagen")
             return
         
         # Crear post
         post_id, post_url = await create_wordpress_post(article_data, wp_image_url)
         
         if post_id:
-            logger.critical("🔄 ✅ ¡PROCESO COMPLETADO EXITOSAMENTE!")
-            logger.critical(f"🔄 Post ID: {post_id}")
-            logger.critical(f"🔄 URL: {post_url}")
+            logger.critical("🚀 ✅ ¡PROCESO COMPLETADO EXITOSAMENTE!")
+            logger.critical(f"🚀 Post ID: {post_id}")
+            logger.critical(f"🚀 URL: {post_url}")
         else:
-            logger.error("🔄 ❌ Error creando post")
+            logger.error("🚀 ❌ Error creando post")
             
     except Exception as e:
-        logger.error(f"🔄 ❌ Error procesando mensaje: {e}")
+        logger.error(f"🚀 ❌ Error procesando mensaje: {e}")
 
 @app.route('/', methods=['GET'])
 def health_check():
     return jsonify({
         'status': 'running',
-        'version': '6.1.0',
+        'version': '6.1.1',
         'method': 'XML-RPC',
-        'wp_connected': wp_client is not None
+        'wp_connected': wp_client is not None,
+        'groq_model': 'llama3-70b-8192'
     })
 
 if __name__ == '__main__':
-    logger.critical("🔄 v6.1.0 lista para recibir webhooks")
+    logger.critical("🚀 v6.1.1 lista para recibir webhooks")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
