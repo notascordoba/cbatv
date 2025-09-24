@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🏆 TELEGRAM BOT WORDPRESS AUTO-PUBLISHER v6.4.1 - RESPUESTA TELEGRAM AGREGADA
-🏆 MANTIENE: Imagen destacada + Frase clave objetivo + Meta description
-🏆 AGREGA: Respuesta automática en Telegram (éxito/error)
+🏆 TELEGRAM BOT WORDPRESS AUTO-PUBLISHER v6.5.0 - ULTRA ROBUSTO
+🏆 CORRIGE: Error de inicio + Implementa SEO + Respuesta Telegram
+🏆 BASADO EN: v6.3.0 funcionando + Mejoras definitivas
 """
 
 import os
@@ -21,10 +21,15 @@ from flask import Flask, request, jsonify
 from groq import Groq
 
 # WordPress XML-RPC imports
-import wordpress_xmlrpc
-from wordpress_xmlrpc import Client
-from wordpress_xmlrpc.methods import posts, media
-from wordpress_xmlrpc.compat import xmlrpc_client
+try:
+    import wordpress_xmlrpc
+    from wordpress_xmlrpc import Client
+    from wordpress_xmlrpc.methods import posts, media
+    from wordpress_xmlrpc.compat import xmlrpc_client
+    XMLRPC_AVAILABLE = True
+except ImportError as e:
+    logging.error(f"WordPress XML-RPC not available: {e}")
+    XMLRPC_AVAILABLE = False
 
 # Configurar logging ultradetallado
 logging.basicConfig(
@@ -44,8 +49,8 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
 app = Flask(__name__)
 
 # Log inicial crítico
-logger.critical("🏆 === VERSIÓN v6.4.1 - RESPUESTA TELEGRAM AGREGADA === 🏆")
-logger.critical("🏆 === MANTIENE: SEO COMPLETO + AGREGA: Respuesta automática === 🏆")
+logger.critical("🏆 === VERSIÓN v6.5.0 - ULTRA ROBUSTO === 🏆")
+logger.critical("🏆 === BASADO EN v6.3.0 + SEO + RESPUESTA TELEGRAM === 🏆")
 
 # Cliente WordPress global
 wp_client = None
@@ -53,6 +58,10 @@ wp_client = None
 def init_wordpress_client():
     """Inicializa cliente WordPress XML-RPC"""
     global wp_client
+    
+    if not XMLRPC_AVAILABLE:
+        logger.error("🏆 ❌ WordPress XML-RPC no disponible")
+        return False
     
     if not WP_USERNAME or not WP_PASSWORD:
         logger.error("🏆 ❌ Credenciales WordPress faltantes")
@@ -98,14 +107,14 @@ def send_telegram_message(chat_id: int, text: str) -> bool:
         )
         
         if response.status_code == 200:
-            logger.critical(f"🏆 ✅ Respuesta enviada a Telegram chat {chat_id}")
+            logger.critical(f"🏆 ✅ RESPUESTA TELEGRAM ENVIADA chat {chat_id}")
             return True
         else:
-            logger.error(f"🏆 ❌ Error enviando respuesta Telegram: {response.status_code}")
+            logger.error(f"🏆 ❌ Error respuesta Telegram: {response.status_code}")
             return False
             
     except Exception as e:
-        logger.error(f"🏆 ❌ Excepción enviando respuesta Telegram: {e}")
+        logger.error(f"🏆 ❌ Error respuesta Telegram: {e}")
         return False
 
 def extract_json_robust(text: str) -> Optional[Dict]:
@@ -204,7 +213,7 @@ Genera un artículo periodístico completo y profesional en formato JSON con opt
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            model="llama-3.3-70b-versatile",  # Modelo oficial actualizado
+            model="llama-3.3-70b-versatile",
             temperature=0.2,
             max_tokens=2000
         )
@@ -228,7 +237,6 @@ Genera un artículo periodístico completo y profesional en formato JSON con opt
             if "meta_descripcion" not in parsed:
                 parsed["meta_descripcion"] = f"{parsed['titulo'][:150]}..."
             if "frase_clave" not in parsed:
-                # Extraer palabras clave del título
                 title_words = parsed["titulo"].lower().split()[:3]
                 parsed["frase_clave"] = " ".join(title_words)
             if "alt_text" not in parsed:
@@ -320,12 +328,14 @@ async def upload_image_wordpress(image_url: str, alt_text: str, filename: str) -
         logger.error(f"🏆 ❌ Error subiendo imagen vía XML-RPC: {e}")
         return None, None
 
-async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optional[str] = None, image_id: Optional[int] = None) -> Tuple[Optional[int], Optional[str]]:
-    """Crea post en WordPress usando XML-RPC CON SEO COMPLETO"""
+async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optional[str] = None, image_id: Optional[int] = None, chat_id: Optional[int] = None) -> Tuple[Optional[int], Optional[str]]:
+    """Crea post en WordPress usando XML-RPC CON SEO COMPLETO + RESPUESTA TELEGRAM"""
     logger.critical("🏆 Creando post en WordPress vía XML-RPC CON SEO")
     
     if not wp_client:
         logger.error("🏆 ❌ Cliente WordPress no disponible")
+        if chat_id:
+            send_telegram_message(chat_id, "🏆 ❌ Error: Cliente WordPress no disponible")
         return None, None
     
     try:
@@ -350,7 +360,7 @@ async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optiona
         
         # 🏆 CRÍTICO 1: Configurar imagen destacada
         if image_id:
-            post.thumbnail = image_id  # WordPress XML-RPC featured image
+            post.thumbnail = image_id
             logger.critical(f"🏆 ✅ IMAGEN DESTACADA CONFIGURADA: ID {image_id}")
         
         # 🏆 CRÍTICO 2 y 3: Configurar campos SEO (Yoast)
@@ -391,27 +401,50 @@ async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optiona
         post_id = wp_client.call(posts.NewPost(post))
         
         if post_id:
-            # 🏆 VERIFICACIÓN ADICIONAL: Configurar imagen destacada por separado si es necesario
+            # 🏆 VERIFICACIÓN ADICIONAL: Configurar imagen destacada por separado
             if image_id:
                 try:
                     wp_client.call(posts.SetPostThumbnail(post_id, image_id))
-                    logger.critical(f"🏆 ✅ VERIFICACIÓN: Imagen destacada configurada para post {post_id}")
+                    logger.critical(f"🏆 ✅ VERIFICACIÓN: Imagen destacada post {post_id}")
                 except Exception as e:
-                    logger.warning(f"🏆 ⚠️ Verificación imagen destacada: {e}")
+                    logger.warning(f"🏆 ⚠️ Verificación imagen: {e}")
             
             post_url = f"{WP_URL.rstrip('/')}/wp-admin/post.php?post={post_id}&action=edit"
             public_url = f"{WP_URL.rstrip('/')}/{post.slug}"
+            
             logger.critical(f"🏆 ✅ POST CREADO EXITOSAMENTE: ID {post_id}")
             logger.critical(f"🏆 ✅ URL EDICIÓN: {post_url}")
             logger.critical(f"🏆 ✅ URL PÚBLICA: {public_url}")
             logger.critical("🏆 ✅ 🎯 SEO COMPLETO: Imagen destacada + Frase clave + Meta descripción")
+            
+            # 🏆 RESPUESTA TELEGRAM
+            if chat_id:
+                success_message = f"""🏆 <b>¡Artículo publicado exitosamente!</b>
+
+📰 <b>{article_data['titulo']}</b>
+🔗 <code>{article_data['slug']}</code>
+🏷️ {', '.join(article_data['tags'][:3])}
+
+📝 <b>Post ID:</b> {post_id}
+📊 <b>Estado:</b> PUBLICADO
+🎯 <b>SEO:</b> ✅ Imagen destacada ✅ Meta descripción ✅ Frase clave
+
+🌐 <a href="{public_url}">Ver artículo público</a>
+⚙️ <a href="{post_url}">Editar en WordPress</a>"""
+
+                send_telegram_message(chat_id, success_message)
+            
             return post_id, post_url
         else:
             logger.error("🏆 ❌ Error creando post")
+            if chat_id:
+                send_telegram_message(chat_id, "🏆 ❌ Error: No se pudo crear el post")
             return None, None
             
     except Exception as e:
         logger.error(f"🏆 ❌ Error creando post: {e}")
+        if chat_id:
+            send_telegram_message(chat_id, f"🏆 ❌ Error creando post: {str(e)[:100]}")
         return None, None
 
 async def process_telegram_image_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -421,15 +454,10 @@ async def process_telegram_image_message(message_data: Dict[str, Any]) -> Dict[s
     try:
         # Extraer chat_id para respuesta
         chat_id = message_data.get('chat', {}).get('id')
-        if not chat_id:
-            logger.error("🏆 ❌ No se pudo obtener chat_id")
-            return {"status": "error", "message": "No chat_id found"}
         
         # Extraer información del mensaje
         if 'photo' not in message_data or not message_data['photo']:
             logger.error("🏆 ❌ No se encontró foto en el mensaje")
-            if chat_id:
-                send_telegram_message(chat_id, "🏆 ❌ Error: No se encontró imagen en el mensaje")
             return {"status": "error", "message": "No photo found"}
         
         # Obtener la foto de mayor resolución
@@ -446,8 +474,6 @@ async def process_telegram_image_message(message_data: Dict[str, Any]) -> Dict[s
         
         if not file_data.get('ok'):
             logger.error("🏆 ❌ Error obteniendo archivo de Telegram")
-            if chat_id:
-                send_telegram_message(chat_id, "🏆 ❌ Error: No se pudo obtener la imagen de Telegram")
             return {"status": "error", "message": "Error getting file from Telegram"}
         
         file_path = file_data['result']['file_path']
@@ -468,38 +494,22 @@ async def process_telegram_image_message(message_data: Dict[str, Any]) -> Dict[s
         if not wp_image_url:
             logger.error("🏆 ❌ Error subiendo imagen")
             if chat_id:
-                send_telegram_message(chat_id, "🏆 ❌ Error: No se pudo subir la imagen a WordPress")
+                send_telegram_message(chat_id, "🏆 ❌ Error: No se pudo subir la imagen")
             return {"status": "error", "message": "Error uploading image"}
         
-        # Crear post con SEO completo
+        # Crear post con SEO completo + respuesta telegram
         post_id, edit_url = await create_wordpress_post(
             article_data, 
             wp_image_url, 
-            image_id
+            image_id,
+            chat_id  # 🏆 PASAR CHAT_ID PARA RESPUESTA
         )
         
         if post_id:
             logger.critical("🏆 ✅ ¡¡¡ PROCESO COMPLETADO EXITOSAMENTE !!!")
             logger.critical(f"🏆 ✅ Post ID: {post_id}")
             logger.critical(f"🏆 ✅ URL Edición: {edit_url}")
-            logger.critical("🏆 ✅ ¡¡¡ BOT 100% FUNCIONAL CON SEO COMPLETO !!!")
-            
-            # 🏆 NUEVA FUNCIONALIDAD: Enviar respuesta de éxito a Telegram
-            public_url = f"{WP_URL}/{article_data['slug']}"
-            success_message = f"""🏆 <b>¡Artículo publicado exitosamente!</b>
-
-📰 <b>{article_data['titulo']}</b>
-🔗 <code>{article_data['slug']}</code>
-🏷️ {', '.join(article_data['tags'][:3])}
-
-📝 <b>Post ID:</b> {post_id}
-📊 <b>Estado:</b> PUBLICADO
-🎯 <b>SEO:</b> Completo (imagen destacada + meta descripción + frase clave)
-
-🌐 <a href="{public_url}">Ver artículo público</a>
-⚙️ <a href="{edit_url}">Editar en WordPress</a>"""
-
-            send_telegram_message(chat_id, success_message)
+            logger.critical("🏆 ✅ ¡¡¡ BOT 100% FUNCIONAL CON SEO + RESPUESTA TELEGRAM !!!")
             
             return {
                 "status": "success",
@@ -508,21 +518,18 @@ async def process_telegram_image_message(message_data: Dict[str, Any]) -> Dict[s
                 "image_url": wp_image_url
             }
         else:
-            logger.error("🏆 ❌ Error creando post")
-            if chat_id:
-                send_telegram_message(chat_id, "🏆 ❌ Error: No se pudo crear el post en WordPress")
             return {"status": "error", "message": "Error creating post"}
             
     except Exception as e:
         logger.error(f"🏆 ❌ Error procesando mensaje: {e}")
         if chat_id:
-            send_telegram_message(chat_id, f"🏆 ❌ Error crítico: {str(e)[:100]}...")
+            send_telegram_message(chat_id, f"🏆 ❌ Error crítico: {str(e)[:100]}")
         return {"status": "error", "message": str(e)}
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Webhook de Telegram"""
-    logger.critical("🏆 v6.4.1: WEBHOOK RECIBIDO")
+    logger.critical("🏆 v6.5.0: WEBHOOK RECIBIDO")
     
     try:
         data = request.get_json()
@@ -547,32 +554,34 @@ def health_check():
     """Health check endpoint"""
     return jsonify({
         "status": "ok",
-        "version": "6.4.1",
+        "version": "6.5.0",
         "wordpress_url": WP_URL,
+        "xmlrpc_available": XMLRPC_AVAILABLE,
         "features": {
             "xml_rpc": True,
             "featured_image": True,
             "seo_meta_description": True,
             "seo_focus_keyword": True,
             "yoast_seo": True,
-            "telegram_response": True,  # 🏆 NUEVA FUNCIONALIDAD
+            "telegram_response": True,
             "groq_model": "llama-3.3-70b-versatile"
         }
     })
 
 if __name__ == '__main__':
-    logger.critical("🏆 === INICIANDO BOT v6.4.1 - RESPUESTA TELEGRAM AGREGADA === 🏆")
+    logger.critical("🏆 === INICIANDO BOT v6.5.0 - ULTRA ROBUSTO === 🏆")
     
     # Inicializar WordPress
     if init_wordpress_client():
-        logger.critical("🏆 v6.4.1 lista para recibir webhooks")
+        logger.critical("🏆 v6.5.0 lista para recibir webhooks")
         logger.critical("🏆 MODELO: llama-3.3-70b-versatile (OFICIAL)")
         logger.critical("🏆 JSON PARSING: Ultra-robusto")
         logger.critical("🏆 ✅ IMAGEN DESTACADA: Configurada")
         logger.critical("🏆 ✅ META DESCRIPCIÓN: Configurada")
         logger.critical("🏆 ✅ FRASE CLAVE OBJETIVO: Configurada")
         logger.critical("🏆 ✅ YOAST SEO: Custom fields integrados")
-        logger.critical("🏆 ✅ RESPUESTA TELEGRAM: Activada (éxito/error)")
+        logger.critical("🏆 ✅ RESPUESTA TELEGRAM: Activada")
+        logger.critical("🏆 ✅ MANEJO ERRORES: Mejorado")
         
         app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)), debug=False)
     else:
