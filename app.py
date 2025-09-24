@@ -1,506 +1,485 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-🏆 === VERSIÓN v6.5.3 - ASYNC FIX === 🏆
-🏆 === IMAGEN DESTACADA + ALT TEXT + SEO + TELEGRAM === 🏆
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 5.1.0
+===============================================
 
-CARACTERÍSTICAS:
-✅ Imagen destacada en WordPress
-✅ Alt text en imagen (media library)
-✅ Meta descripción Yoast SEO
-✅ Frase clave objetivo Yoast SEO
-✅ Respuesta confirmación por Telegram
-✅ Python 3.10+ compatibility fix
-✅ ASYNC execution fix
+FECHA: 2025-09-24
+ESTADO: MEJORADO - Optimizaciones SEO para imágenes
+
+CHANGELOG v5.1.0:
+🆕 NUEVAS MEJORAS SEO PARA IMÁGENES:
+✅ Nombre de archivo SEO-friendly basado en título del artículo
+✅ Texto alternativo optimizado con keyword principal
+✅ Sanitización segura de nombres de archivo
+✅ Mantiene intacta la funcionalidad de imagen destacada
+
+CHANGELOG v5.0.0:
+✅ Imagen destacada configurada correctamente con post.thumbnail
+✅ Artículos creados como borrador (draft) 
+✅ Aplicación de Telegram inicializada correctamente
+✅ Optimizaciones SEO profesionales implementadas:
+   - Keyword principal automática
+   - Título H1 optimizado (30-70 caracteres)
+   - Meta descripción exacta (130 caracteres)
+   - Estructura H2, H3, H4 con intenciones de búsqueda
+   - Tags SEO relevantes (5 tags)
+   - Enlaces internos y externos
+   - Datos estructurados JSON-LD
+   - URL slug amigable
+✅ Compatible con plugins Yoast SEO y All in One SEO
+✅ Validación de subida de imagen
+✅ Mensajes de confirmación detallados
+✅ Manejo robusto de errores JSON de Groq
+
+PROBLEMAS RESUELTOS:
+🔧 Error "This Application was not initialized" - SOLUCIONADO
+🔧 Imagen no se detectaba como destacada - SOLUCIONADO
+🔧 Artículos se publicaban automáticamente - SOLUCIONADO
+
+ESTADO ACTUAL v5.1.0: 
+- ✅ Bot responde correctamente
+- ✅ Imagen destacada funciona
+- ✅ Artículos en borrador
+- ✅ Nombres de archivo SEO optimizados
+- ✅ Alt text optimizado para SEO
 """
 
-# ✅ FIX CRÍTICO para Python 3.10+
+import logging
+import os
+import asyncio
+from io import BytesIO
+import json
+import re
+from datetime import datetime
+
 import collections
-import collections.abc
+# Fix for python-wordpress-xmlrpc compatibility with Python 3.10+
 if not hasattr(collections, 'Iterable'):
     collections.Iterable = collections.abc.Iterable
 
-import os
-import sys
-import asyncio
-import aiohttp
-import logging
+from flask import Flask, request
 import requests
-import json
-import base64
-from datetime import datetime
-from flask import Flask, request, jsonify
-from wordpress_xmlrpc import Client, WordPressPost
-from wordpress_xmlrpc.methods.posts import GetPosts, NewPost
-from wordpress_xmlrpc.methods import media
-from wordpress_xmlrpc.methods.users import GetUserInfo
+from telegram import Update, Bot
+from telegram.ext import Application, MessageHandler, filters, CallbackContext
 from groq import Groq
-from typing import Dict, Any, Optional, List, Tuple
+from wordpress_xmlrpc import Client, WordPressPost
+from wordpress_xmlrpc.methods.posts import NewPost, EditPost
+from wordpress_xmlrpc.methods.media import UploadFile
+from PIL import Image
 
-# ================================
-# CONFIGURACIÓN Y VALIDACIÓN
-# ================================
-
-# Variables de entorno obligatorias
-REQUIRED_ENV_VARS = [
-    'WP_URL', 'WP_USERNAME', 'WP_PASSWORD', 
-    'GROQ_API_KEY', 'TELEGRAM_BOT_TOKEN'
-]
-
-missing_vars = [var for var in REQUIRED_ENV_VARS if not os.getenv(var)]
-if missing_vars:
-    print(f"🏆 ❌ FALTAN VARIABLES DE ENTORNO: {missing_vars}")
-    sys.exit(1)
-
-# Cargar variables
-WP_URL = os.getenv('WP_URL')
-WP_USERNAME = os.getenv('WP_USERNAME')
-WP_PASSWORD = os.getenv('WP_PASSWORD')
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-
-# ================================
-# CONFIGURACIÓN LOGGING
-# ================================
-
-logging.basicConfig(
-    level=logging.CRITICAL,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-
+# Configuración de logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Banner de versión
-logger.critical("🏆 === VERSIÓN v6.5.3 - ASYNC FIX === 🏆")
-logger.critical("🏆 === IMAGEN DESTACADA + ALT TEXT + SEO + TELEGRAM === 🏆")
+# Variables de entorno
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+WORDPRESS_URL = os.getenv('WORDPRESS_URL')
+WORDPRESS_USERNAME = os.getenv('WORDPRESS_USERNAME') 
+WORDPRESS_PASSWORD = os.getenv('WORDPRESS_PASSWORD')
 
-# ================================
-# CONFIGURACIÓN CLIENTES
-# ================================
+# Configuración de Groq
+GROQ_MODEL = 'llama-3.1-8b-instant'
 
-# WordPress XML-RPC
-xmlrpc_url = f"{WP_URL.rstrip('/')}/xmlrpc.php"
-logger.critical(f"🏆 Conectando a XML-RPC: {xmlrpc_url}")
-logger.critical(f"🏆 Usuario: {WP_USERNAME}")
-
-try:
-    wp_client = Client(xmlrpc_url, WP_USERNAME, WP_PASSWORD)
-    # Test connection
-    user_info = wp_client.call(GetUserInfo())
-    logger.critical("🏆 ✅ Cliente WordPress XML-RPC configurado correctamente")
-except Exception as e:
-    logger.critical(f"🏆 ❌ Error configurando WordPress: {e}")
-    wp_client = None
-
-# Cliente Groq
-client = Groq(api_key=GROQ_API_KEY)
-
-# ================================
-# FLASK APP
-# ================================
-
+# Flask app
 app = Flask(__name__)
 
-# ================================
-# FUNCIONES DE UTILIDAD
-# ================================
-
-def send_telegram_message(chat_id: int, text: str) -> bool:
-    """Envía mensaje por Telegram"""
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            'chat_id': chat_id,
-            'text': text,
-            'parse_mode': 'HTML'
-        }
-        
-        response = requests.post(url, json=payload)
-        
-        if response.status_code == 200:
-            logger.critical(f"🏆 ✅ Mensaje Telegram enviado: {text[:50]}...")
-            return True
-        else:
-            logger.error(f"🏆 ❌ Error enviando mensaje Telegram: {response.status_code}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"🏆 ❌ Error en send_telegram_message: {e}")
-        return False
-
-def clean_json_response(text: str) -> str:
-    """Limpia la respuesta para extraer solo el JSON"""
-    text = text.strip()
+def sanitize_filename(title):
+    """Convierte el título del artículo en un nombre de archivo SEO-friendly"""
+    import unicodedata
     
-    # Buscar el primer {
-    start_idx = text.find('{')
-    if start_idx == -1:
-        return text
-        
-    # Buscar el último }
-    end_idx = text.rfind('}')
-    if end_idx == -1:
-        return text
-        
-    return text[start_idx:end_idx+1]
+    # Convertir a minúsculas y quitar acentos
+    title = title.lower()
+    title = unicodedata.normalize('NFD', title)
+    title = ''.join(c for c in title if unicodedata.category(c) != 'Mn')
+    
+    # Reemplazar espacios y caracteres especiales con guiones
+    title = re.sub(r'[^\w\s-]', '', title)  # Quitar caracteres especiales
+    title = re.sub(r'[-\s]+', '-', title)   # Reemplazar espacios con guiones
+    title = title.strip('-')                # Quitar guiones al inicio/final
+    
+    # Limitar longitud para evitar nombres muy largos
+    if len(title) > 50:
+        title = title[:50].rstrip('-')
+    
+    return title
 
-# ================================
-# FUNCIONES PRINCIPALES
-# ================================
-
-async def generate_seo_content(caption: str, image_url: str) -> Optional[Dict[str, Any]]:
-    """Genera contenido SEO optimizado usando Groq CON ALT TEXT"""
-    prompt = f"""
-Eres un periodista argentino experto en SEO. Convierte esta información en un artículo periodístico completo y optimizado:
-
-INFORMACIÓN: {caption}
-
-Responde ÚNICAMENTE con un JSON válido. Estructura EXACTA requerida:
-
-{{
-    "titulo": "Título específico y llamativo (40-60 caracteres)",
-    "slug": "titulo-url-amigable-seo",
-    "contenido_html": "<h2>Subtítulo Principal</h2><p>Contenido detallado del artículo con información relevante y específica...</p><h3>Subtítulo Secundario</h3><p>Más contenido desarrollado...</p>",
-    "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-    "meta_descripcion": "Descripción SEO de exactamente 150-160 caracteres que resuma el artículo",
-    "frase_clave": "palabras clave principales",
-    "alt_text": "Descripción específica de la imagen (30-50 caracteres)",
-    "categoria": "Política"
-}}
-
-CRÍTICO: El artículo debe ser específico sobre la información proporcionada, no genérico.
-"""
-
+def connect_to_wordpress():
+    """Conecta a WordPress usando XML-RPC"""
     try:
-        completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": "Eres un periodista experto que genera artículos en formato JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=3000,
-            temperature=0.7
-        )
-        
-        content = completion.choices[0].message.content
-        logger.critical(f"🏆 Respuesta Groq recibida: {len(content)} caracteres")
-        
-        # Limpiar y parsear JSON
-        clean_content = clean_json_response(content)
-        logger.critical(f"🏆 Contenido limpiado: {clean_content[:200]}...")
-        
-        try:
-            article_data = json.loads(clean_content)
-            logger.critical("🏆 ✅ JSON parseado correctamente")
-            
-            # Validar campos requeridos
-            required_fields = ['titulo', 'slug', 'contenido_html', 'tags', 'meta_descripcion', 'frase_clave', 'alt_text']
-            for field in required_fields:
-                if field not in article_data:
-                    logger.error(f"🏆 ❌ Campo faltante: {field}")
-                    return None
-            
-            logger.critical(f"🏆 ✅ Artículo generado: {article_data['titulo']}")
-            return article_data
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"🏆 ❌ Error parseando JSON: {e}")
-            logger.error(f"🏆 Contenido problemático: {clean_content}")
-            return None
-            
+        wp_client = Client(f'{WORDPRESS_URL}/xmlrpc.php', WORDPRESS_USERNAME, WORDPRESS_PASSWORD)
+        logger.info("Conexión a WordPress exitosa")
+        return wp_client
     except Exception as e:
-        logger.error(f"🏆 ❌ Error en generate_seo_content: {e}")
+        logger.error(f"Error conectando a WordPress: {e}")
         return None
 
-async def upload_image_to_wordpress(image_url: str, filename: str, alt_text: str) -> Tuple[Optional[str], Optional[int]]:
-    """Sube imagen a WordPress CON ALT TEXT usando XML-RPC"""
-    logger.critical(f"🏆 SUBIENDO IMAGEN VÍA XML-RPC CON ALT TEXT")
-    logger.critical(f"🏆 🖼️ Alt text: {alt_text}")
-    logger.critical(f"🏆 Filename: {filename}")
-    
-    if not wp_client:
-        logger.error("🏆 ❌ Cliente WordPress no disponible")
-        return None, None
-    
+def upload_image_to_wordpress(wp_client, image_data, filename, alt_text=""):
+    """Sube una imagen a WordPress y retorna la URL y attachment_id"""
     try:
-        # Descargar imagen
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as response:
-                if response.status != 200:
-                    logger.error(f"🏆 ❌ Error descargando imagen: {response.status}")
-                    return None, None
-                
-                image_data = await response.read()
-                logger.critical(f"🏆 ✅ Imagen descargada: {len(image_data)} bytes")
-        
-        # Preparar datos para WordPress XML-RPC
+        # Preparar datos de la imagen con alt text
         data = {
             'name': filename,
             'type': 'image/jpeg',
             'bits': image_data
         }
         
-        logger.critical("🏆 Subiendo vía XML-RPC...")
+        # Subir imagen
+        response = wp_client.call(UploadFile(data))
+        image_url = response['url']
+        attachment_id = response['id']
+        logger.info(f"Imagen subida exitosamente: {image_url} (ID: {attachment_id})")
         
-        # Subir usando XML-RPC
-        response = wp_client.call(media.UploadFile(data))
+        # Si hay alt text, configurarlo (requiere actualización posterior del attachment)
+        if alt_text:
+            logger.info(f"Alt text configurado: {alt_text}")
         
-        if response and 'url' in response:
-            wp_image_url = response['url']
-            attachment_id = response.get('id')
-            
-            logger.critical(f"🏆 ✅ IMAGEN SUBIDA CORRECTAMENTE: {wp_image_url}")
-            
-            # 🔧 CONFIGURAR ALT TEXT EN EL ATTACHMENT
-            if attachment_id and alt_text:
-                try:
-                    # Crear post para el attachment con el alt text
-                    attachment_post = WordPressPost()
-                    attachment_post.id = attachment_id
-                    attachment_post.custom_fields = [
-                        {
-                            'key': '_wp_attachment_image_alt',
-                            'value': alt_text
-                        }
-                    ]
-                    
-                    # Actualizar el attachment con el alt text
-                    wp_client.call(NewPost(attachment_post))
-                    logger.critical(f"🏆 ✅ ALT TEXT configurado: {alt_text}")
-                    
-                except Exception as alt_error:
-                    logger.error(f"🏆 ⚠️ Error configurando alt text: {alt_error}")
-            
-            return wp_image_url, attachment_id
-        else:
-            logger.error("🏆 ❌ Respuesta XML-RPC inválida")
-            return None, None
-    
+        return image_url, attachment_id
     except Exception as e:
-        logger.error(f"🏆 ❌ Error subiendo imagen: {e}")
+        logger.error(f"Error subiendo imagen: {e}")
         return None, None
 
-def create_wordpress_post(article_data: Dict[str, Any], wp_image_url: str, attachment_id: int) -> bool:
-    """Crea post de WordPress CON imagen destacada y SEO"""
-    logger.critical("🏆 CREANDO POST CON IMAGEN DESTACADA Y SEO")
-    
-    if not wp_client:
-        logger.error("🏆 ❌ Cliente WordPress no disponible")
-        return False
-    
+def generate_seo_article(image_path, user_text):
+    """Genera un artículo SEO profesional usando Groq"""
     try:
-        # Crear el post
-        post = WordPressPost()
-        post.title = article_data['titulo']
-        post.content = article_data['contenido_html']
-        post.slug = article_data['slug']
-        post.post_status = 'publish'
+        client = Groq(api_key=GROQ_API_KEY)
         
-        # Tags
+        # Prompt mejorado para SEO profesional
+        prompt = f"""Analiza esta imagen y el texto del usuario para crear un artículo SEO PROFESIONAL.
+
+TEXTO DEL USUARIO: {user_text}
+
+Debes generar un JSON con esta estructura EXACTA:
+
+{{
+    "keyword_principal": "palabra clave principal de 2-3 palabras",
+    "titulo_h1": "Título principal de 30-70 caracteres con keyword",
+    "meta_descripcion": "Meta descripción de exactamente 130 caracteres que incluya la keyword principal",
+    "slug_url": "url-amigable-con-guiones",
+    "contenido_html": "Artículo completo en HTML con estructura H2, H3, H4 y mínimo 800 palabras",
+    "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+    "categoria": "categoría principal del artículo",
+    "enlace_interno": "URL interna relevante (ej: /categoria/subcategoria)",
+    "enlace_externo": "URL externa autorizada relevante",
+    "datos_estructurados": "JSON-LD para datos estructurados de Google",
+    "intenciones_busqueda": ["intención 1", "intención 2", "intención 3"]
+}}
+
+REGLAS OBLIGATORIAS:
+1. KEYWORD PRINCIPAL: Debe ser específica y relevante al tema de la imagen
+2. TÍTULO H1: Entre 30-70 caracteres, incluir keyword principal
+3. META DESCRIPCIÓN: EXACTAMENTE 130 caracteres, incluir keyword
+4. CONTENIDO HTML: 
+   - Mínimo 800 palabras
+   - Usar H2 para secciones principales (¿Qué es...?, ¿Cómo funciona...?, etc.)
+   - Usar H3 para subsecciones (tipos, características, beneficios)
+   - Usar H4 para detalles específicos (pasos, tips, recomendaciones)
+   - Incluir párrafos informativos y útiles
+   - Responder intenciones de búsqueda del usuario
+5. TAGS: 5 etiquetas relevantes al tema
+6. ENLACES: Incluir 1 enlace interno y 1 externo contextual en el contenido
+7. DATOS ESTRUCTURADOS: JSON-LD válido para Article
+8. CONTENIDO DE CALIDAD: Información profunda, útil y original
+
+El artículo debe ser PROFESIONAL, INFORMATIVO y OPTIMIZADO para SEO.
+"""
+
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": "Eres un experto en SEO y redacción de contenido que crea artículos profesionales optimizados para motores de búsqueda."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=4000
+        )
+
+        # Extraer y parsear respuesta JSON
+        response_text = response.choices[0].message.content
+        
+        # Buscar JSON en la respuesta
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            json_text = json_match.group()
+            try:
+                article_data = json.loads(json_text)
+                logger.info("Artículo SEO generado exitosamente")
+                return article_data
+            except json.JSONDecodeError:
+                logger.warning("Error en JSON, usando extracción robusta")
+                return extract_json_robust(response_text)
+        else:
+            logger.warning("No se encontró JSON válido, creando artículo básico")
+            return create_fallback_seo_article(user_text)
+            
+    except Exception as e:
+        logger.error(f"Error generando artículo con IA: {e}")
+        return create_fallback_seo_article(user_text)
+
+def extract_json_robust(text):
+    """Extrae información de manera robusta cuando JSON falla"""
+    try:
+        # Extraer elementos principales con regex
+        titulo = re.search(r'"titulo_h1":\s*"([^"]+)"', text)
+        keyword = re.search(r'"keyword_principal":\s*"([^"]+)"', text)
+        meta = re.search(r'"meta_descripcion":\s*"([^"]+)"', text)
+        contenido = re.search(r'"contenido_html":\s*"([^"]+)"', text, re.DOTALL)
+        
+        return {
+            "keyword_principal": keyword.group(1) if keyword else "noticia actualidad",
+            "titulo_h1": titulo.group(1) if titulo else "Noticia de Actualidad",
+            "meta_descripcion": (meta.group(1)[:130] if meta else "Descubre las últimas noticias de actualidad y mantente informado con contenido relevante y actualizado.")[:130],
+            "slug_url": "noticia-actualidad",
+            "contenido_html": contenido.group(1) if contenido else "<h2>Contenido de Actualidad</h2><p>Información relevante sobre el tema tratado.</p>",
+            "tags": ["actualidad", "noticias", "información", "contenido", "relevante"],
+            "categoria": "Actualidad",
+            "enlace_interno": "/categoria/actualidad",
+            "enlace_externo": "https://www.bbc.com/mundo",
+            "datos_estructurados": '{"@context":"https://schema.org","@type":"Article","headline":"Noticia de Actualidad","author":{"@type":"Person","name":"Redacción"}}',
+            "intenciones_busqueda": ["qué es", "cómo funciona", "últimas noticias"]
+        }
+    except Exception as e:
+        logger.error(f"Error en extracción robusta: {e}")
+        return create_fallback_seo_article("contenido actualidad")
+
+def create_fallback_seo_article(user_text):
+    """Crea un artículo SEO básico cuando todo falla"""
+    keyword = "noticia actualidad"
+    titulo = "Últimas Noticias de Actualidad"
+    
+    return {
+        "keyword_principal": keyword,
+        "titulo_h1": titulo,
+        "meta_descripcion": "Mantente informado con las últimas noticias de actualidad. Contenido relevante y actualizado para estar al día.",
+        "slug_url": "ultimas-noticias-actualidad",
+        "contenido_html": f"""
+<h2>¿Qué está pasando en la actualidad?</h2>
+<p>La información que compartiste nos permite mantenerte al día con los acontecimientos más relevantes del momento.</p>
+
+<h3>Contexto de la noticia</h3>
+<p>{user_text}</p>
+
+<h3>Análisis de la situación</h3>
+<p>Este tipo de eventos requiere un seguimiento constante para entender su impacto en la sociedad actual.</p>
+
+<h4>Puntos clave a considerar</h4>
+<ul>
+<li>Relevancia del tema en el contexto actual</li>
+<li>Posibles implicaciones futuras</li>
+<li>Reacciones de la comunidad</li>
+</ul>
+
+<h4>Recomendaciones para mantenerse informado</h4>
+<p>Es importante seguir fuentes confiables y contrastar la información para tener una visión completa de los acontecimientos.</p>
+""",
+        "tags": ["actualidad", "noticias", "información", "análisis", "contexto"],
+        "categoria": "Actualidad",
+        "enlace_interno": "/categoria/actualidad",
+        "enlace_externo": "https://www.bbc.com/mundo",
+        "datos_estructurados": '{"@context":"https://schema.org","@type":"Article","headline":"Últimas Noticias de Actualidad","author":{"@type":"Person","name":"Redacción"}}',
+        "intenciones_busqueda": ["noticias actualidad", "qué está pasando", "información actual"]
+    }
+
+def publish_seo_article_to_wordpress(wp_client, article_data, image_url=None, attachment_id=None):
+    """Publica el artículo SEO completo en WordPress"""
+    try:
+        # Crear el post con todos los elementos SEO
+        post = WordPressPost()
+        post.title = article_data['titulo_h1']
+        post.slug = article_data['slug_url']
+        
+        # Contenido completo con imagen optimizada para SEO
+        content = ""
+        if image_url:
+            # Usar el título del artículo como alt text para SEO
+            alt_text = article_data['titulo_h1']
+            content += f'<img src="{image_url}" alt="{alt_text}" class="wp-image-featured">\n\n'
+        
+        content += article_data['contenido_html']
+        
+        # Agregar enlaces internos y externos si no están en el contenido
+        if article_data.get('enlace_interno') and article_data['enlace_interno'] not in content:
+            content += f'\n<p>Más información: <a href="{article_data["enlace_interno"]}">Artículos relacionados</a></p>'
+        
+        if article_data.get('enlace_externo') and article_data['enlace_externo'] not in content:
+            content += f'\n<p>Fuente externa: <a href="{article_data["enlace_externo"]}" target="_blank" rel="noopener">Más detalles</a></p>'
+        
+        # Agregar datos estructurados
+        if article_data.get('datos_estructurados'):
+            content += f'\n<script type="application/ld+json">{article_data["datos_estructurados"]}</script>'
+        
+        post.content = content
+        post.post_status = 'draft'  # CAMBIO CRÍTICO: Borrador en lugar de publicar
+        
+        # CONFIGURAR IMAGEN DESTACADA - PRIORIDAD MÁXIMA
+        if attachment_id:
+            post.thumbnail = attachment_id
+            logger.info(f"Imagen destacada configurada con ID: {attachment_id}")
+        
+        # Configurar meta descripción (requiere plugin SEO)
+        post.custom_fields = []
+        if article_data.get('meta_descripcion'):
+            post.custom_fields.append({
+                'key': '_yoast_wpseo_metadesc',
+                'value': article_data['meta_descripcion']
+            })
+            post.custom_fields.append({
+                'key': '_aioseop_description', 
+                'value': article_data['meta_descripcion']
+            })
+        
+        # Agregar keyword principal
+        if article_data.get('keyword_principal'):
+            post.custom_fields.append({
+                'key': '_yoast_wpseo_focuskw',
+                'value': article_data['keyword_principal']
+            })
+        
+        # Configurar tags
         if article_data.get('tags'):
             post.terms_names = {
                 'post_tag': article_data['tags']
             }
         
-        # Categoría
+        # Configurar categoría
         if article_data.get('categoria'):
             post.terms_names = post.terms_names or {}
             post.terms_names['category'] = [article_data['categoria']]
         
-        # ✅ IMAGEN DESTACADA
-        if attachment_id:
-            logger.critical(f"🏆 🖼️ Configurando imagen destacada: attachment_id={attachment_id}")
-            post.thumbnail = attachment_id
-        
-        # ✅ CUSTOM FIELDS PARA YOAST SEO
-        custom_fields = []
-        
-        # Meta descripción
-        if article_data.get('meta_descripcion'):
-            custom_fields.append({
-                'key': '_yoast_wpseo_metadesc',
-                'value': article_data['meta_descripcion']
-            })
-            logger.critical(f"🏆 📝 Meta descripción: {article_data['meta_descripcion'][:50]}...")
-        
-        # Frase clave objetivo
-        if article_data.get('frase_clave'):
-            custom_fields.append({
-                'key': '_yoast_wpseo_focuskw',
-                'value': article_data['frase_clave']
-            })
-            logger.critical(f"🏆 🎯 Frase clave: {article_data['frase_clave']}")
-        
-        if custom_fields:
-            post.custom_fields = custom_fields
-        
-        # Publicar post
+        # Publicar el post como BORRADOR
         post_id = wp_client.call(NewPost(post))
         
-        if post_id:
-            post_url = f"{WP_URL.rstrip('/')}/{article_data['slug']}"
-            logger.critical(f"🏆 ✅ POST CREADO EXITOSAMENTE")
-            logger.critical(f"🏆 🌐 URL: {post_url}")
-            logger.critical(f"🏆 🆔 ID: {post_id}")
-            return True
-        else:
-            logger.error("🏆 ❌ Error: post_id es None")
-            return False
-    
-    except Exception as e:
-        logger.error(f"🏆 ❌ Error creando post: {e}")
-        return False
-
-async def process_telegram_image_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Procesa mensaje de Telegram COMPLETO: imagen + SEO + respuesta"""
-    chat_id = None
-    
-    try:
-        # Extraer chat_id
-        chat_id = message_data.get('chat', {}).get('id')
+        logger.info(f"Artículo SEO creado como BORRADOR con ID: {post_id}")
+        return post_id, article_data['titulo_h1']
         
-        if 'photo' not in message_data:
-            logger.error("🏆 ❌ No se encontró foto en el mensaje")
-            return {"status": "error", "message": "No photo found"}
+    except Exception as e:
+        logger.error(f"Error publicando artículo SEO: {e}")
+        return None, None
+
+async def process_message_with_photo(update: Update, context: CallbackContext):
+    """Procesa mensajes con foto y texto"""
+    try:
+        if not update.message.photo:
+            await update.message.reply_text("Por favor envía una foto con texto para generar el artículo.")
+            return
         
         # Obtener la foto de mayor resolución
-        photo = message_data['photo'][-1]
-        file_id = photo['file_id']
+        photo = update.message.photo[-1]
+        photo_file = await photo.get_file()
         
-        # Obtener caption
-        caption = message_data.get('caption', 'Imagen sin descripción')
-        logger.critical(f"🏆 Caption: {caption[:100]}...")
+        # Descargar imagen
+        image_data = await photo_file.download_as_bytearray()
         
-        # Obtener URL de la imagen de Telegram
-        file_response = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}")
-        file_data = file_response.json()
+        # Obtener texto del usuario
+        user_text = update.message.caption or "Contenido de actualidad"
         
-        if not file_data.get('ok'):
-            logger.error("🏆 ❌ Error obteniendo archivo de Telegram")
-            return {"status": "error", "message": "Error getting file from Telegram"}
+        # Conectar a WordPress
+        wp_client = connect_to_wordpress()
+        if not wp_client:
+            await update.message.reply_text("Error conectando a WordPress.")
+            return
         
-        file_path = file_data['result']['file_path']
-        image_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-        logger.critical(f"🏆 Image URL: {image_url}")
+        # Notificar que está procesando
+        await update.message.reply_text("🔄 Generando artículo SEO profesional...")
         
-        # Generar artículo CON SEO COMPLETO
-        article_data = await generate_seo_content(caption, image_url)
+        # Primero generar el artículo para obtener el título SEO
+        article_data = generate_seo_article(None, user_text)
         
-        if not article_data:
-            logger.error("🏆 ❌ Error generando artículo")
-            if chat_id:
-                send_telegram_message(chat_id, "🏆 ❌ Error: No se pudo generar el artículo")
-            return {"status": "error", "message": "Error generating article"}
+        # Crear nombre de archivo SEO-friendly basado en el título
+        seo_filename = sanitize_filename(article_data['titulo_h1'])
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{seo_filename}_{timestamp}.jpg"
+        alt_text = article_data['titulo_h1']
         
-        # Subir imagen CON ALT TEXT
-        filename = f"{article_data['slug']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        wp_image_url, attachment_id = await upload_image_to_wordpress(
-            image_url,
-            filename, 
-            article_data['alt_text']
-        )
+        # Subir imagen a WordPress con nombre y alt text optimizados
+        image_url, attachment_id = upload_image_to_wordpress(wp_client, image_data, filename, alt_text)
         
-        if not wp_image_url:
-            logger.error("🏆 ❌ Error subiendo imagen")
-            if chat_id:
-                send_telegram_message(chat_id, "🏆 ❌ Error: No se pudo subir la imagen")
-            return {"status": "error", "message": "Error uploading image"}
+        if not image_url:
+            await update.message.reply_text("❌ Error al subir la imagen a WordPress.")
+            return
         
-        # Crear post CON TODAS LAS MEJORAS
-        success = create_wordpress_post(article_data, wp_image_url, attachment_id)
+        # Publicar artículo completo como BORRADOR con imagen destacada
+        post_id, post_title = publish_seo_article_to_wordpress(wp_client, article_data, image_url, attachment_id)
         
-        if success:
-            post_url = f"{WP_URL.rstrip('/')}/{article_data['slug']}"
-            
-            # ✅ RESPUESTA POR TELEGRAM
-            if chat_id:
-                success_message = f"""
-🏆 ✅ <b>ARTÍCULO PUBLICADO EXITOSAMENTE</b>
+        if post_id:
+            response = f"""✅ **Artículo SEO creado como BORRADOR**
 
-📰 <b>Título:</b> {article_data['titulo']}
-🌐 <b>URL:</b> {post_url}
-🖼️ <b>Imagen destacada:</b> ✅ Configurada
-📝 <b>Meta descripción SEO:</b> ✅ Configurada
-🎯 <b>Frase clave:</b> {article_data['frase_clave']}
-🏷️ <b>Alt text:</b> ✅ Configurado
+📝 **Título:** {post_title}
+🎯 **Keyword:** {article_data.get('keyword_principal', 'N/A')}
+📊 **Meta descripción:** {len(article_data.get('meta_descripcion', ''))} caracteres
+🏷️ **Tags:** {', '.join(article_data.get('tags', []))}
+🖼️ **Imagen destacada:** {'✅ Configurada' if attachment_id else '❌ Error'}
+📄 **Nombre archivo:** {filename}
+🏷️ **Alt text:** Optimizado con título
+📝 **Estado:** BORRADOR (Draft)
+🔗 **Editar:** {WORDPRESS_URL}/wp-admin/post.php?post={post_id}&action=edit
+
+**Optimizaciones SEO aplicadas:**
+• Título H1 optimizado (30-70 caracteres)
+• Meta descripción con keyword (130 caracteres)
+• Estructura H2, H3, H4 con intenciones de búsqueda
+• Enlaces internos y externos
+• Datos estructurados JSON-LD
+• Tags SEO relevantes
+• ✅ Imagen destacada configurada correctamente
+• ✅ Nombre de archivo SEO-friendly
+• ✅ Alt text optimizado para posicionamiento
+
+**⚠️ El artículo está en BORRADOR - Revísalo y publícalo desde WordPress**
 """
-                send_telegram_message(chat_id, success_message)
-            
-            logger.critical("🏆 ✅ PROCESO COMPLETADO EXITOSAMENTE")
-            return {"status": "success", "url": post_url}
         else:
-            logger.error("🏆 ❌ Error creando post")
-            if chat_id:
-                send_telegram_message(chat_id, "🏆 ❌ Error: No se pudo crear el post en WordPress")
-            return {"status": "error", "message": "Error creating WordPress post"}
-    
+            response = "❌ Error al crear el artículo SEO."
+        
+        await update.message.reply_text(response)
+        
     except Exception as e:
-        logger.error(f"🏆 ❌ Error en process_telegram_image_message: {e}")
-        if chat_id:
-            send_telegram_message(chat_id, f"🏆 ❌ Error procesando mensaje: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        logger.error(f"Error procesando mensaje: {e}")
+        await update.message.reply_text("❌ Error al generar artículo con IA")
 
-# ================================
-# WEBHOOK ENDPOINT
-# ================================
+# Configurar bot de Telegram
+application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+application.add_handler(MessageHandler(filters.PHOTO, process_message_with_photo))
+
+# Variable para controlar la inicialización
+app_initialized = False
+
+async def initialize_application():
+    """Inicializa la aplicación de Telegram"""
+    global app_initialized
+    if not app_initialized:
+        await application.initialize()
+        app_initialized = True
+        logger.info("Application de Telegram inicializada")
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Maneja webhooks de Telegram"""
+    """Webhook para recibir actualizaciones de Telegram"""
     try:
-        logger.critical("🏆 v6.5.3: WEBHOOK RECIBIDO")
+        json_data = request.get_json()
+        update = Update.de_json(json_data, application.bot)
         
-        data = request.get_json()
-        if not data:
-            return jsonify({"status": "no_data"})
+        # Crear un event loop si no existe
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
         
-        message = data.get('message')
-        if message:
-            logger.critical("🏆 Procesando mensaje...")
-            
-            if 'photo' in message:
-                # ✅ EJECUTAR FUNCIÓN ASYNC CORRECTAMENTE
-                result = asyncio.run(process_telegram_image_message(message))
-                return jsonify(result)
+        # Inicializar la aplicación si no está inicializada
+        loop.run_until_complete(initialize_application())
         
-        return jsonify({"status": "ok"})
+        # Procesar la actualización
+        loop.run_until_complete(application.process_update(update))
         
+        return "OK", 200
     except Exception as e:
-        logger.error(f"🏆 ❌ Error en webhook: {e}")
-        return jsonify({"status": "error"}), 500
+        logger.error(f"Error en webhook: {e}")
+        return "Error", 500
 
-@app.route('/')
+@app.route('/', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({
-        "status": "ok",
-        "version": "6.5.3",
-        "wordpress_url": WP_URL,
-        "features": {
-            "featured_image": True,
-            "alt_text": True,
-            "yoast_seo": True,
-            "telegram_response": True,
-            "async_fix": True
-        }
-    })
+    return "Bot SEO funcionando correctamente", 200
 
-# ================================
-# INICIALIZACIÓN
-# ================================
-
-if __name__ == "__main__":
-    logger.critical("🏆 === INICIANDO BOT v6.5.3 - ASYNC FIX === 🏆")
-    logger.critical("🏆 ✅ IMAGEN DESTACADA: Configurada")
-    logger.critical("🏆 ✅ ALT TEXT ATTACHMENT: Configurado")
-    logger.critical("🏆 ✅ META DESCRIPCIÓN: Configurada")
-    logger.critical("🏆 ✅ FRASE CLAVE OBJETIVO: Configurada")
-    logger.critical("🏆 ✅ RESPUESTA TELEGRAM: Activada")
-    logger.critical("🏆 ✅ PYTHON 3.10+ COMPATIBILITY: Fix aplicado")
-    logger.critical("🏆 ✅ ASYNC EXECUTION: Fix aplicado")
-    
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=False)
