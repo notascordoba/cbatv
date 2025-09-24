@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🏆 TELEGRAM BOT WORDPRESS AUTO-PUBLISHER v6.5.0 - ULTRA ROBUSTO
-🏆 CORRIGE: Error de inicio + Implementa SEO + Respuesta Telegram
-🏆 BASADO EN: v6.3.0 funcionando + Mejoras definitivas
+🏆 TELEGRAM BOT WORDPRESS AUTO-PUBLISHER v6.5.1 - ALT TEXT FIX
+🏆 CORRIGE: Alt text de imagen destacada + TODOS LOS PROBLEMAS ANTERIORES
+🏆 BASADO EN: v6.5.0 + Alt text attachment fix
 """
 
 import os
@@ -49,8 +49,8 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
 app = Flask(__name__)
 
 # Log inicial crítico
-logger.critical("🏆 === VERSIÓN v6.5.0 - ULTRA ROBUSTO === 🏆")
-logger.critical("🏆 === BASADO EN v6.3.0 + SEO + RESPUESTA TELEGRAM === 🏆")
+logger.critical("🏆 === VERSIÓN v6.5.1 - ALT TEXT FIX === 🏆")
+logger.critical("🏆 === CORRIGE: Alt text imagen destacada + SEO completo === 🏆")
 
 # Cliente WordPress global
 wp_client = None
@@ -184,6 +184,7 @@ INSTRUCCIONES CRÍTICAS:
 5. Incluye 5 tags relevantes
 6. OBLIGATORIO: Genera frase clave objetivo SEO (2-4 palabras)
 7. OBLIGATORIO: Genera meta descripción SEO (150-160 caracteres)
+8. OBLIGATORIO: Genera alt text descriptivo para la imagen (30-60 caracteres)
 
 FORMATO JSON REQUERIDO:
 {
@@ -194,10 +195,13 @@ FORMATO JSON REQUERIDO:
     'meta_descripcion': 'Descripción SEO optimizada de 150-160 caracteres máximo',
     'frase_clave': 'frase clave seo',
     'categoria': 'Política',
-    'alt_text': 'Descripción de imagen para accessibility'
+    'alt_text': 'Descripción de imagen para accessibility y SEO (30-60 caracteres)'
 }
 
-IMPORTANTE: La frase_clave debe ser relevante y estar presente en el contenido. La meta_descripción debe ser atractiva y resumir el artículo."""
+IMPORTANTE: 
+- La frase_clave debe ser relevante y estar presente en el contenido
+- La meta_descripción debe ser atractiva y resumir el artículo
+- El alt_text debe describir específicamente el contenido visual de la imagen"""
 
         user_prompt = f"""Crear artículo informativo basado en:
 
@@ -240,7 +244,7 @@ Genera un artículo periodístico completo y profesional en formato JSON con opt
                 title_words = parsed["titulo"].lower().split()[:3]
                 parsed["frase_clave"] = " ".join(title_words)
             if "alt_text" not in parsed:
-                parsed["alt_text"] = f"Imagen relacionada con {parsed['titulo']}"
+                parsed["alt_text"] = f"Imagen relacionada con {parsed['titulo'][:40]}"
             if "categoria" not in parsed:
                 parsed["categoria"] = "General"
             
@@ -248,12 +252,17 @@ Genera un artículo periodístico completo y profesional en formato JSON con opt
             if len(parsed["meta_descripcion"]) > 160:
                 parsed["meta_descripcion"] = parsed["meta_descripcion"][:157] + "..."
             
+            # Validar longitud de alt_text
+            if len(parsed["alt_text"]) > 60:
+                parsed["alt_text"] = parsed["alt_text"][:57] + "..."
+            
             logger.critical("🏆 ✅ Artículo generado exitosamente")
             logger.critical(f"🏆 Título: {parsed['titulo']}")
             logger.critical(f"🏆 Slug: {parsed['slug']}")
             logger.critical(f"🏆 Tags: {parsed['tags']}")
             logger.critical(f"🏆 🎯 Frase clave SEO: {parsed['frase_clave']}")
             logger.critical(f"🏆 📝 Meta descripción: {parsed['meta_descripcion']}")
+            logger.critical(f"🏆 🖼️ Alt text: {parsed['alt_text']}")
             
             return parsed
         else:
@@ -279,14 +288,14 @@ Genera un artículo periodístico completo y profesional en formato JSON con opt
             "slug": safe_filename(title),
             "meta_descripcion": caption[:150] + "..." if len(caption) > 150 else caption,
             "frase_clave": " ".join(words[:3]),
-            "alt_text": f"Imagen relacionada con {title}",
+            "alt_text": f"Imagen sobre {' '.join(words[:5])}",
             "categoria": "General"
         }
 
-async def upload_image_wordpress(image_url: str, alt_text: str, filename: str) -> Tuple[Optional[str], Optional[int]]:
-    """Sube imagen a WordPress usando XML-RPC (método original)"""
-    logger.critical(f"🏆 SUBIENDO IMAGEN VÍA XML-RPC")
-    logger.critical(f"🏆 Alt text: {alt_text}")
+async def upload_image_wordpress_with_alt(image_url: str, alt_text: str, filename: str) -> Tuple[Optional[str], Optional[int]]:
+    """Sube imagen a WordPress usando XML-RPC CON ALT TEXT CONFIGURADO"""
+    logger.critical(f"🏆 SUBIENDO IMAGEN VÍA XML-RPC CON ALT TEXT")
+    logger.critical(f"🏆 🖼️ Alt text: {alt_text}")
     logger.critical(f"🏆 Filename: {filename}")
     
     if not wp_client:
@@ -317,8 +326,41 @@ async def upload_image_wordpress(image_url: str, alt_text: str, filename: str) -
                 response = wp_client.call(media.UploadFile(data))
                 
                 if response and 'url' in response:
-                    logger.critical(f"🏆 ✅ IMAGEN SUBIDA CORRECTAMENTE: {response['url']}")
-                    return response['url'], response.get('id')
+                    image_wp_url = response['url']
+                    attachment_id = response.get('id')
+                    
+                    logger.critical(f"🏆 ✅ IMAGEN SUBIDA CORRECTAMENTE: {image_wp_url}")
+                    logger.critical(f"🏆 ✅ Attachment ID: {attachment_id}")
+                    
+                    # 🔧 CONFIGURAR ALT TEXT DEL ATTACHMENT
+                    if attachment_id and alt_text:
+                        try:
+                            logger.critical(f"🏆 🔧 CONFIGURANDO ALT TEXT: {alt_text}")
+                            
+                            # Crear post del attachment para actualizar alt text
+                            attachment_post = wordpress_xmlrpc.WordPressPost()
+                            attachment_post.id = attachment_id
+                            
+                            # Configurar custom fields para alt text
+                            attachment_post.custom_fields = []
+                            attachment_post.custom_fields.append({
+                                'key': '_wp_attachment_image_alt',
+                                'value': alt_text
+                            })
+                            
+                            # También configurar excerpt (texto alternativo)
+                            attachment_post.excerpt = alt_text
+                            
+                            # Actualizar attachment
+                            wp_client.call(posts.EditPost(attachment_id, attachment_post))
+                            
+                            logger.critical(f"🏆 ✅ ALT TEXT CONFIGURADO EN ATTACHMENT: {alt_text}")
+                            
+                        except Exception as e:
+                            logger.warning(f"🏆 ⚠️ Error configurando alt text: {e}")
+                            # No fallar si no se puede configurar alt text
+                    
+                    return image_wp_url, attachment_id
                 else:
                     logger.error("🏆 ❌ Respuesta inválida de WordPress XML-RPC")
                     logger.critical(f"🏆 Respuesta completa: {response}")
@@ -329,8 +371,8 @@ async def upload_image_wordpress(image_url: str, alt_text: str, filename: str) -
         return None, None
 
 async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optional[str] = None, image_id: Optional[int] = None, chat_id: Optional[int] = None) -> Tuple[Optional[int], Optional[str]]:
-    """Crea post en WordPress usando XML-RPC CON SEO COMPLETO + RESPUESTA TELEGRAM"""
-    logger.critical("🏆 Creando post en WordPress vía XML-RPC CON SEO")
+    """Crea post en WordPress usando XML-RPC CON SEO COMPLETO + ALT TEXT + RESPUESTA TELEGRAM"""
+    logger.critical("🏆 Creando post en WordPress vía XML-RPC CON SEO COMPLETO + ALT TEXT")
     
     if not wp_client:
         logger.error("🏆 ❌ Cliente WordPress no disponible")
@@ -344,10 +386,11 @@ async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optiona
         post.title = article_data['titulo']
         post.slug = article_data['slug']
         
-        # Contenido HTML con imagen
+        # Contenido HTML con imagen CON ALT TEXT
         content = ""
         if image_url:
-            content += f'<p><img src="{image_url}" alt="{article_data["alt_text"]}" class="wp-image-featured" style="width:100%; height:auto; margin-bottom: 20px;"></p>\n\n'
+            alt_text = article_data.get("alt_text", article_data["titulo"])
+            content += f'<p><img src="{image_url}" alt="{alt_text}" class="wp-image-featured" style="width:100%; height:auto; margin-bottom: 20px;"></p>\n\n'
         
         content += article_data['contenido_html']
         
@@ -397,6 +440,7 @@ async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optiona
         logger.critical(f"🏆 Título: {post.title}")
         logger.critical(f"🏆 Slug: {post.slug}")
         logger.critical(f"🏆 Tags: {article_data.get('tags', [])}")
+        logger.critical(f"🏆 🖼️ Alt text: {article_data.get('alt_text', 'N/A')}")
         
         post_id = wp_client.call(posts.NewPost(post))
         
@@ -415,7 +459,7 @@ async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optiona
             logger.critical(f"🏆 ✅ POST CREADO EXITOSAMENTE: ID {post_id}")
             logger.critical(f"🏆 ✅ URL EDICIÓN: {post_url}")
             logger.critical(f"🏆 ✅ URL PÚBLICA: {public_url}")
-            logger.critical("🏆 ✅ 🎯 SEO COMPLETO: Imagen destacada + Frase clave + Meta descripción")
+            logger.critical("🏆 ✅ 🎯 SEO COMPLETO: Imagen destacada + Alt text + Frase clave + Meta descripción")
             
             # 🏆 RESPUESTA TELEGRAM
             if chat_id:
@@ -427,7 +471,10 @@ async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optiona
 
 📝 <b>Post ID:</b> {post_id}
 📊 <b>Estado:</b> PUBLICADO
-🎯 <b>SEO:</b> ✅ Imagen destacada ✅ Meta descripción ✅ Frase clave
+🎯 <b>SEO:</b> ✅ Imagen destacada ✅ Alt text ✅ Meta descripción ✅ Frase clave
+
+🖼️ <b>Alt text:</b> {article_data.get('alt_text', 'N/A')}
+🎯 <b>Frase clave:</b> {article_data.get('frase_clave', 'N/A')}
 
 🌐 <a href="{public_url}">Ver artículo público</a>
 ⚙️ <a href="{post_url}">Editar en WordPress</a>"""
@@ -448,7 +495,7 @@ async def create_wordpress_post(article_data: Dict[str, Any], image_url: Optiona
         return None, None
 
 async def process_telegram_image_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Procesa mensaje de Telegram con imagen y genera artículo"""
+    """Procesa mensaje de Telegram con imagen y genera artículo CON ALT TEXT"""
     chat_id = None
     
     try:
@@ -480,14 +527,14 @@ async def process_telegram_image_message(message_data: Dict[str, Any]) -> Dict[s
         image_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
         logger.critical(f"🏆 Image URL: {image_url}")
         
-        # Generar artículo
+        # Generar artículo CON ALT TEXT
         article_data = await generate_article_groq(caption, "imagen proporcionada")
         
-        # Subir imagen a WordPress
+        # Subir imagen a WordPress CON ALT TEXT
         filename = f"{article_data['slug']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        wp_image_url, image_id = await upload_image_wordpress(
+        wp_image_url, image_id = await upload_image_wordpress_with_alt(
             image_url, 
-            article_data['alt_text'], 
+            article_data['alt_text'],  # ← ALT TEXT AQUÍ
             filename
         )
         
@@ -497,7 +544,7 @@ async def process_telegram_image_message(message_data: Dict[str, Any]) -> Dict[s
                 send_telegram_message(chat_id, "🏆 ❌ Error: No se pudo subir la imagen")
             return {"status": "error", "message": "Error uploading image"}
         
-        # Crear post con SEO completo + respuesta telegram
+        # Crear post con SEO completo + ALT TEXT + respuesta telegram
         post_id, edit_url = await create_wordpress_post(
             article_data, 
             wp_image_url, 
@@ -509,13 +556,15 @@ async def process_telegram_image_message(message_data: Dict[str, Any]) -> Dict[s
             logger.critical("🏆 ✅ ¡¡¡ PROCESO COMPLETADO EXITOSAMENTE !!!")
             logger.critical(f"🏆 ✅ Post ID: {post_id}")
             logger.critical(f"🏆 ✅ URL Edición: {edit_url}")
-            logger.critical("🏆 ✅ ¡¡¡ BOT 100% FUNCIONAL CON SEO + RESPUESTA TELEGRAM !!!")
+            logger.critical(f"🏆 ✅ Alt text configurado: {article_data['alt_text']}")
+            logger.critical("🏆 ✅ ¡¡¡ BOT 100% FUNCIONAL CON ALT TEXT + SEO + RESPUESTA TELEGRAM !!!")
             
             return {
                 "status": "success",
                 "post_id": post_id,
                 "edit_url": edit_url,
-                "image_url": wp_image_url
+                "image_url": wp_image_url,
+                "alt_text": article_data['alt_text']
             }
         else:
             return {"status": "error", "message": "Error creating post"}
@@ -529,7 +578,7 @@ async def process_telegram_image_message(message_data: Dict[str, Any]) -> Dict[s
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Webhook de Telegram"""
-    logger.critical("🏆 v6.5.0: WEBHOOK RECIBIDO")
+    logger.critical("🏆 v6.5.1: WEBHOOK RECIBIDO")
     
     try:
         data = request.get_json()
@@ -554,12 +603,13 @@ def health_check():
     """Health check endpoint"""
     return jsonify({
         "status": "ok",
-        "version": "6.5.0",
+        "version": "6.5.1",
         "wordpress_url": WP_URL,
         "xmlrpc_available": XMLRPC_AVAILABLE,
         "features": {
             "xml_rpc": True,
             "featured_image": True,
+            "alt_text_attachment": True,  # ← NUEVA FUNCIONALIDAD
             "seo_meta_description": True,
             "seo_focus_keyword": True,
             "yoast_seo": True,
@@ -569,14 +619,15 @@ def health_check():
     })
 
 if __name__ == '__main__':
-    logger.critical("🏆 === INICIANDO BOT v6.5.0 - ULTRA ROBUSTO === 🏆")
+    logger.critical("🏆 === INICIANDO BOT v6.5.1 - ALT TEXT FIX === 🏆")
     
     # Inicializar WordPress
     if init_wordpress_client():
-        logger.critical("🏆 v6.5.0 lista para recibir webhooks")
+        logger.critical("🏆 v6.5.1 lista para recibir webhooks")
         logger.critical("🏆 MODELO: llama-3.3-70b-versatile (OFICIAL)")
         logger.critical("🏆 JSON PARSING: Ultra-robusto")
         logger.critical("🏆 ✅ IMAGEN DESTACADA: Configurada")
+        logger.critical("🏆 ✅ ALT TEXT ATTACHMENT: Configurado")  # ← NUEVA FUNCIONALIDAD
         logger.critical("🏆 ✅ META DESCRIPCIÓN: Configurada")
         logger.critical("🏆 ✅ FRASE CLAVE OBJETIVO: Configurada")
         logger.critical("🏆 ✅ YOAST SEO: Custom fields integrados")
