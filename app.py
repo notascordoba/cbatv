@@ -15,20 +15,11 @@ import time
 import urllib.parse
 from html import escape
 
-# CONFIGURACIÓN ULTRA-DETALLADA DE LOGGING
-logging.basicConfig(
-    level=logging.INFO, 
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('app_debug.log')
-    ]
-)
+# Configuración de logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# LOGGING FORZADO PARA VERIFICAR VERSIÓN
-logger.critical("=== INICIANDO APP v5.3.2 ULTRA-AGRESIVA ===")
-logger.critical("=== ESTA ES LA NUEVA VERSIÓN CON FALLBACK FORZADO ===")
+logger.critical("=== v5.3.4: PROMPT PERIODÍSTICO REAL ===")
 
 # Configuración
 GROQ_API_KEY = os.environ.get('GROQ_API_KEY')
@@ -52,8 +43,6 @@ app = Flask(__name__)
 
 def sanitize_filename(text):
     """Sanitiza texto para crear nombres de archivo válidos y URLs amigables."""
-    logger.info(f"v5.3.2: Sanitizando filename: {text[:50]}...")
-    
     # Convertir a minúsculas y reemplazar caracteres especiales
     sanitized = text.lower()
     # Reemplazar caracteres acentuados
@@ -71,104 +60,199 @@ def sanitize_filename(text):
     # Limpiar guiones al inicio y final
     sanitized = sanitized.strip('-')
     
-    result = sanitized[:50]  # Limitar longitud
-    logger.info(f"v5.3.2: Resultado sanitizado: {result}")
-    return result
+    return sanitized[:50]  # Limitar longitud
 
-def generate_forced_fallback_content(user_caption, image_description):
-    """
-    VERSIÓN v5.3.2: SIEMPRE genera contenido de fallback basado en el caption del usuario.
-    NO depende del AI para nada.
-    """
-    logger.critical("=== v5.3.2: GENERANDO CONTENIDO DE FALLBACK FORZADO ===")
-    logger.critical(f"v5.3.2: Caption del usuario: {user_caption}")
-    
-    # Extraer líneas del caption
-    lines = [line.strip() for line in user_caption.split('\n') if line.strip()]
-    logger.info(f"v5.3.2: Líneas extraídas: {len(lines)}")
-    
-    # Primera línea como título principal
-    titulo_principal = lines[0] if lines else "Noticia Importante"
-    logger.critical(f"v5.3.2: Título principal: {titulo_principal}")
-    
-    # Crear contenido HTML estructurado usando TODAS las líneas del caption
-    contenido_html = f"<h1>{escape(titulo_principal)}</h1>\n\n"
-    
-    if len(lines) > 1:
-        # Usar la segunda línea como subtítulo
-        contenido_html += f"<h2>Detalles del Acontecimiento</h2>\n"
-        contenido_html += f"<p>{escape(lines[1])}</p>\n\n"
+def extract_json_robust(content):
+    """Extrae JSON de manera robusta, manejando malformaciones."""
+    try:
+        # Intento 1: JSON directo
+        return json.loads(content)
+    except:
+        logger.warning("Error en JSON, usando extracción robusta")
         
-        # Usar líneas adicionales como párrafos
-        if len(lines) > 2:
-            contenido_html += f"<h3>Información Adicional</h3>\n"
-            for i, line in enumerate(lines[2:], 3):
-                contenido_html += f"<p>{escape(line)}</p>\n"
-    
-    # Agregar contenido adicional para cumplir con 500+ palabras
-    contenido_html += f"""
-<h2>Contexto de la Noticia</h2>
-<p>Esta información ha sido reportada por nuestro equipo de redacción especializado en cobertura política y eventos internacionales.</p>
+        try:
+            # Intento 2: Buscar entre llaves
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                return json.loads(json_match.group())
+        except:
+            pass
+        
+        # Intento 3: Extraer campos manualmente
+        try:
+            titulo = re.search(r'"titulo_h1"\s*:\s*"([^"]*)"', content)
+            contenido = re.search(r'"contenido_html"\s*:\s*"((?:[^"\\]|\\.)*)"', content)
+            meta = re.search(r'"meta_descripcion"\s*:\s*"([^"]*)"', content)
+            tags = re.search(r'"tags"\s*:\s*\[(.*?)\]', content)
+            slug = re.search(r'"slug_url"\s*:\s*"([^"]*)"', content)
+            
+            if titulo and contenido:
+                result = {
+                    "titulo_h1": titulo.group(1),
+                    "contenido_html": contenido.group(1).replace('\\"', '"'),
+                    "meta_descripcion": meta.group(1) if meta else "",
+                    "tags": [],
+                    "slug_url": slug.group(1) if slug else ""
+                }
+                
+                if tags:
+                    tag_matches = re.findall(r'"([^"]*)"', tags.group(1))
+                    result["tags"] = tag_matches
+                
+                return result
+        except:
+            pass
+        
+        return None
 
-<h3>Importancia del Evento</h3>
-<p>Los acontecimientos descritos representan desarrollos significativos en el ámbito político, con implicaciones que trascienden las fronteras nacionales y que requieren seguimiento continuo por parte de los medios especializados.</p>
-
-<h3>Seguimiento de la Situación</h3>
-<p>Nuestro equipo continuará monitoreando los desarrollos relacionados con esta noticia para brindar actualizaciones oportunas a nuestros lectores.</p>
-
-<p><strong>Nota:</strong> Esta información corresponde a los reportes más recientes disponibles al momento de la publicación.</p>
-"""
+def generate_specific_tags(user_caption):
+    """Genera tags específicos basados en el caption del usuario."""
+    logger.critical("v5.3.4: Generando tags específicos desde caption")
     
-    # Generar tags específicos basados en palabras clave del caption
-    words = re.findall(r'\b[A-ZÁ-Ÿa-zá-ÿ]{4,}\b', user_caption)
-    # Filtrar palabras comunes
-    stop_words = {'para', 'desde', 'hasta', 'sobre', 'entre', 'durante', 'después', 'antes', 'dentro'}
-    important_words = [w.lower() for w in words if w.lower() not in stop_words][:5]
+    # Extraer palabras clave importantes (4+ caracteres, no comunes)
+    words = re.findall(r'\b[A-ZÁ-ÿa-zá-ÿ]{4,}\b', user_caption.lower())
     
-    if not important_words:
-        important_words = ['política', 'actualidad', 'noticias']
-    
-    logger.critical(f"v5.3.2: Tags generados: {important_words}")
-    
-    # Crear slug basado en el título
-    slug = sanitize_filename(titulo_principal)
-    logger.critical(f"v5.3.2: Slug generado: {slug}")
-    
-    # Crear meta descripción
-    meta_descripcion = titulo_principal
-    if len(meta_descripcion) > 160:
-        meta_descripcion = meta_descripcion[:157] + "..."
-    if len(meta_descripcion) < 120:
-        if len(lines) > 1:
-            additional_text = lines[1][:50]
-            meta_descripcion += f". {additional_text}"
-    
-    logger.critical(f"v5.3.2: Meta descripción: {meta_descripcion}")
-    
-    fallback_data = {
-        "titulo_h1": titulo_principal,
-        "contenido_html": contenido_html,
-        "meta_descripcion": meta_descripcion,
-        "tags": important_words,
-        "slug_url": slug
+    # Palabras a excluir (muy comunes)
+    stop_words = {
+        'para', 'desde', 'hasta', 'sobre', 'entre', 'durante', 
+        'después', 'antes', 'dentro', 'contra', 'hacia', 'según',
+        'mientras', 'aunque', 'porque', 'cuando', 'donde', 'como',
+        'este', 'esta', 'estos', 'estas', 'aquel', 'aquella',
+        'será', 'serán', 'está', 'están', 'tiene', 'tienen',
+        'hacer', 'hace', 'hizo', 'sido', 'estar', 'tener',
+        'edición', 'número', 'ciudad', 'país', 'presidente'
     }
     
-    logger.critical("=== v5.3.2: CONTENIDO DE FALLBACK GENERADO EXITOSAMENTE ===")
-    logger.critical(f"v5.3.2: Longitud del contenido HTML: {len(contenido_html)} caracteres")
+    # Filtrar palabras importantes
+    keywords = []
+    for word in words:
+        if word not in stop_words and len(word) >= 4:
+            keywords.append(word)
     
-    return fallback_data
+    # Tomar las 5 primeras palabras únicas
+    unique_keywords = list(dict.fromkeys(keywords))[:5]
+    
+    # Si no hay suficientes, agregar algunas genéricas relevantes
+    if len(unique_keywords) < 3:
+        additional = ['política', 'actualidad', 'argentina']
+        for add_word in additional:
+            if add_word not in unique_keywords:
+                unique_keywords.append(add_word)
+                if len(unique_keywords) >= 3:
+                    break
+    
+    logger.critical(f"v5.3.4: Tags generados: {unique_keywords}")
+    return unique_keywords
 
-def upload_image_to_wordpress_enhanced(image_url, filename="image.jpg", alt_text=""):
-    """Versión v5.3.2: Upload mejorado con múltiples métodos para alt text."""
-    logger.critical(f"=== v5.3.2: SUBIENDO IMAGEN CON ALT TEXT MEJORADO ===")
-    logger.critical(f"v5.3.2: Alt text a configurar: '{alt_text}'")
+def generate_slug_from_caption(user_caption):
+    """Genera slug específico basado en la primera línea del caption."""
+    logger.critical("v5.3.4: Generando slug específico desde caption")
+    
+    # Tomar la primera línea como base para el slug
+    first_line = user_caption.split('\n')[0].strip()
+    
+    # Si es muy larga, tomar solo las primeras palabras importantes
+    words = first_line.split()
+    if len(words) > 8:
+        first_line = ' '.join(words[:8])
+    
+    slug = sanitize_filename(first_line)
+    logger.critical(f"v5.3.4: Slug generado: {slug}")
+    return slug
+
+def generate_seo_article(image_description, user_caption):
+    """Genera artículo SEO con prompt periodístico real."""
+    logger.info("v5.3.4: Generando artículo con prompt periodístico mejorado")
+    
+    prompt = f"""Sos un periodista político argentino experimentado. Escribí un artículo periodístico sobre estos hechos ESPECÍFICOS:
+
+{user_caption}
+
+ESCRIBÍ COMO PERIODISTA ARGENTINO:
+- Lenguaje directo, concreto, periodístico
+- Concentrate en los HECHOS reales mencionados
+- Evitá frases genéricas sobre "cooperación internacional"
+- Usá "descubrí", "conocé", "enterate" (argentino)
+- SIN enlaces externos ni fuentes externas
+- Mínimo 500 palabras sobre los hechos concretos
+
+ESTRUCTURA PERIODÍSTICA:
+H1: Título directo sobre el hecho principal
+H2: Detalles del encuentro entre Milei y Trump
+H3: Lo que se conversó en la reunión
+H3: El discurso que dará mañana
+H2: El contexto político actual
+H3: Qué significa esto para Argentina
+
+IMPORTANTE: Escribí SOLO sobre los hechos mencionados, sin agregar información no proporcionada.
+
+JSON únicamente:
+{
+  "titulo_h1": "Título periodístico directo sobre el hecho",
+  "contenido_html": "HTML con hechos específicos, lenguaje periodístico argentino",
+  "meta_descripcion": "Descripción directa en argentino sobre el hecho",
+  "tags": ["tag1", "tag2", "tag3"], 
+  "slug_url": "slug-directo-sobre-el-hecho"
+}"""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.6,  # Menos temperatura para más consistencia
+            max_tokens=2000
+        )
+        
+        content = response.choices[0].message.content.strip()
+        logger.info(f"v5.3.4: Respuesta AI generada, primeros 200 chars: {content[:200]}")
+        
+        # Extraer datos del JSON
+        article_data = extract_json_robust(content)
+        
+        if article_data:
+            # FORZAR tags y slug específicos (v5.3.4)
+            article_data['tags'] = generate_specific_tags(user_caption)
+            article_data['slug_url'] = generate_slug_from_caption(user_caption)
+            
+            # Limpiar cualquier enlace externo del contenido
+            article_data['contenido_html'] = re.sub(
+                r'<a[^>]*href=["\']https?://[^"\']*["\'][^>]*>([^<]*)</a>',
+                r'\1',
+                article_data['contenido_html']
+            )
+            
+            # Eliminar referencias a fuentes externas
+            article_data['contenido_html'] = re.sub(
+                r'<p[^>]*>Fuente externa:.*?</p>',
+                '',
+                article_data['contenido_html']
+            )
+            
+            # Eliminar referencias genéricas a BBC y similares
+            article_data['contenido_html'] = re.sub(
+                r'<p[^>]*>Más información:.*?</p>',
+                '',
+                article_data['contenido_html']
+            )
+            
+            logger.critical(f"v5.3.4: Artículo generado exitosamente")
+            logger.critical(f"v5.3.4: Título: {article_data['titulo_h1']}")
+            return article_data
+        else:
+            raise Exception("No se pudo extraer datos válidos del AI")
+            
+    except Exception as e:
+        logger.error(f"v5.3.4: Error generando artículo: {e}")
+        raise
+
+def upload_image_to_wordpress_alt_fixed(image_url, filename="image.jpg", alt_text=""):
+    """Subida de imagen con ALT TEXT FORZADO (v5.3.4)."""
+    logger.critical(f"v5.3.4: CONFIGURANDO ALT TEXT FORZADO: '{alt_text}'")
     
     try:
         # Descargar imagen
-        logger.info("v5.3.2: Descargando imagen...")
         response = requests.get(image_url, timeout=30)
         response.raise_for_status()
-        logger.info(f"v5.3.2: Imagen descargada, tamaño: {len(response.content)} bytes")
         
         # Preparar datos para subida
         data = {
@@ -178,69 +262,53 @@ def upload_image_to_wordpress_enhanced(image_url, filename="image.jpg", alt_text
         }
         
         # Subir imagen
-        logger.info("v5.3.2: Subiendo a WordPress...")
         upload_result = wp_client.call(UploadFile(data))
         attachment_id = upload_result['id']
         image_url_wp = upload_result['url']
         
-        logger.critical(f"v5.3.2: Imagen subida exitosamente: {image_url_wp} (ID: {attachment_id})")
+        logger.info(f"Imagen subida exitosamente: {image_url_wp} (ID: {attachment_id})")
         
-        # CONFIGURAR ALT TEXT CON MÚLTIPLES MÉTODOS AGRESIVOS
+        # CONFIGURACIÓN AGRESIVA DE ALT TEXT (v5.3.4)
         if alt_text:
-            logger.critical(f"v5.3.2: INICIANDO CONFIGURACIÓN AGRESIVA DE ALT TEXT")
-            
             try:
-                # Método 1: Obtener y modificar el post del attachment
-                logger.info("v5.3.2: Método 1 - Obteniendo post de attachment...")
+                logger.critical(f"v5.3.4: INICIANDO CONFIGURACIÓN MÚLTIPLE DE ALT TEXT")
+                
+                # Obtener el post del attachment
                 attachment_post = wp_client.call(GetPost(attachment_id))
                 
-                # Configurar múltiples campos
-                attachment_post.excerpt = alt_text  # Campo de excerpt (WordPress usa esto para alt text)
-                attachment_post.content = alt_text  # Campo de contenido
-                attachment_post.description = alt_text  # Campo de descripción
+                # Configurar TODOS los campos posibles
+                attachment_post.excerpt = alt_text
+                attachment_post.content = alt_text
+                attachment_post.description = alt_text
                 
-                # Actualizar
+                # Configurar custom fields para alt text
+                custom_fields = [
+                    {'key': '_wp_attachment_image_alt', 'value': alt_text},
+                    {'key': 'alt_text', 'value': alt_text},
+                    {'key': '_alt_text', 'value': alt_text}
+                ]
+                attachment_post.custom_fields = custom_fields
+                
+                # Actualizar el post
                 wp_client.call(EditPost(attachment_id, attachment_post))
-                logger.critical(f"v5.3.2: Método 1 COMPLETADO - Alt text configurado en excerpt, content y description")
                 
-                # Método 2: Intentar configurar custom fields
-                try:
-                    logger.info("v5.3.2: Método 2 - Configurando custom fields...")
-                    attachment_post.custom_fields = [
-                        {'key': '_wp_attachment_image_alt', 'value': alt_text},
-                        {'key': 'alt_text', 'value': alt_text},
-                        {'key': '_alt_text', 'value': alt_text}
-                    ]
-                    wp_client.call(EditPost(attachment_id, attachment_post))
-                    logger.critical("v5.3.2: Método 2 COMPLETADO - Custom fields configurados")
-                except Exception as e:
-                    logger.warning(f"v5.3.2: Método 2 falló: {e}")
+                logger.critical(f"v5.3.4: ALT TEXT CONFIGURADO EN MÚLTIPLES CAMPOS")
+                logger.critical(f"Alt text configurado: {alt_text}")
                 
-                # Método 3: Re-verificar configuración
-                try:
-                    logger.info("v5.3.2: Método 3 - Verificando configuración...")
-                    verified_post = wp_client.call(GetPost(attachment_id))
-                    logger.critical(f"v5.3.2: Verificación - Excerpt: '{verified_post.excerpt}'")
-                    logger.critical(f"v5.3.2: Verificación - Content: '{verified_post.content}'")
-                except Exception as e:
-                    logger.warning(f"v5.3.2: Verificación falló: {e}")
-                    
             except Exception as e:
-                logger.error(f"v5.3.2: Error configurando alt text: {e}")
+                logger.error(f"v5.3.4: Error configurando alt text: {e}")
         
-        logger.critical("=== v5.3.2: UPLOAD DE IMAGEN COMPLETADO ===")
         return attachment_id, image_url_wp
         
     except Exception as e:
-        logger.error(f"v5.3.2: Error subiendo imagen: {e}")
+        logger.error(f"Error subiendo imagen: {e}")
         raise
 
-def publish_seo_article_to_wordpress_enhanced(article_data, featured_image_id, image_url, alt_text):
-    """Versión v5.3.2: Publicación mejorada con validación."""
-    logger.critical("=== v5.3.2: PUBLICANDO ARTÍCULO CON DATOS MEJORADOS ===")
-    logger.critical(f"v5.3.2: Título: {article_data['titulo_h1']}")
-    logger.critical(f"v5.3.2: Tags: {article_data['tags']}")
-    logger.critical(f"v5.3.2: Slug: {article_data['slug_url']}")
+def publish_seo_article_to_wordpress(article_data, featured_image_id, image_url, alt_text):
+    """Publica artículo con configuración forzada (v5.3.4)."""
+    logger.critical(f"v5.3.4: PUBLICANDO CON DATOS FORZADOS")
+    logger.critical(f"v5.3.4: Tags: {article_data['tags']}")
+    logger.critical(f"v5.3.4: Slug: {article_data['slug_url']}")
     
     try:
         # Crear nuevo post
@@ -257,37 +325,35 @@ def publish_seo_article_to_wordpress_enhanced(article_data, featured_image_id, i
         
         # Configurar imagen destacada
         post.thumbnail = featured_image_id
-        logger.critical(f"v5.3.2: Imagen destacada configurada con ID: {featured_image_id}")
+        logger.critical(f"Imagen destacada configurada con ID: {featured_image_id}")
         
-        # Configurar tags y categorías
+        # FORZAR configuración de tags (v5.3.4)
         post.terms_names = {
             'post_tag': article_data['tags']
         }
-        logger.critical(f"v5.3.2: Tags configurados: {article_data['tags']}")
+        logger.critical(f"v5.3.4: TAGS FORZADOS: {article_data['tags']}")
         
-        # Configurar slug
+        # FORZAR configuración de slug (v5.3.4)  
         if article_data.get('slug_url'):
             post.slug = article_data['slug_url']
-            logger.critical(f"v5.3.2: Slug configurado: {article_data['slug_url']}")
+            logger.critical(f"v5.3.4: SLUG FORZADO: {article_data['slug_url']}")
         
         # Publicar post
         post_id = wp_client.call(NewPost(post))
         
-        logger.critical(f"=== v5.3.2: ARTÍCULO PUBLICADO EXITOSAMENTE (ID: {post_id}) ===")
+        logger.critical(f"Artículo SEO creado como BORRADOR con ID: {post_id}")
         return post_id
         
     except Exception as e:
-        logger.error(f"v5.3.2: Error publicando artículo: {e}")
+        logger.error(f"Error publicando artículo: {e}")
         raise
 
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
-    """Versión v5.3.2: Webhook con fallback forzado."""
-    logger.critical("=== v5.3.2: WEBHOOK RECIBIDO ===")
-    
+    """Maneja webhooks de Telegram con prompt periodístico mejorado v5.3.4."""
     try:
         update = request.get_json()
-        logger.info(f"v5.3.2: Webhook data recibido")
+        logger.info(f"Webhook recibido")
         
         if 'message' not in update:
             return jsonify({"status": "ok"})
@@ -295,13 +361,12 @@ def telegram_webhook():
         message = update['message']
         
         if 'photo' in message and 'caption' in message:
-            # Obtener la foto de mayor calidad
-            photo = message['photo'][-1]  # La última es la de mayor resolución
+            photo = message['photo'][-1]
             file_id = photo['file_id']
             caption = message['caption']
             
-            logger.critical(f"=== v5.3.2: PROCESANDO FOTO CON CAPTION ===")
-            logger.critical(f"v5.3.2: Caption recibido: {caption}")
+            logger.critical(f"v5.3.4: PROCESANDO CAPTION CON PROMPT PERIODÍSTICO")
+            logger.critical(f"v5.3.4: Caption: {caption[:100]}...")
             
             # Obtener URL del archivo
             file_info_response = requests.get(f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}')
@@ -316,77 +381,58 @@ def telegram_webhook():
                 safe_caption = sanitize_filename(caption[:50])
                 filename = f"{safe_caption}_{timestamp}.jpg"
                 
-                # Generar descripción de la imagen usando el caption
-                image_description = f"Imagen relacionada con: {caption}"
+                # Generar alt text específico
+                alt_text = caption.split('\n')[0][:100]  # Primera línea, máximo 100 chars
+                if len(alt_text) > 97:
+                    alt_text = alt_text[:97] + "..."
                 
-                # Generar alt text descriptivo
-                alt_text = caption[:100] if len(caption) <= 100 else caption[:97] + "..."
-                logger.critical(f"v5.3.2: Alt text generado: {alt_text}")
+                logger.critical(f"v5.3.4: ALT TEXT PREPARADO: '{alt_text}'")
                 
                 try:
-                    # Subir imagen a WordPress con método mejorado
-                    attachment_id, wp_image_url = upload_image_to_wordpress_enhanced(
+                    # Subir imagen con alt text forzado
+                    attachment_id, wp_image_url = upload_image_to_wordpress_alt_fixed(
                         file_url, 
                         filename, 
                         alt_text
                     )
                     
-                    # USAR SIEMPRE EL SISTEMA DE FALLBACK (v5.3.2)
-                    logger.critical("=== v5.3.2: USANDO SISTEMA DE FALLBACK FORZADO (NO AI) ===")
-                    article_data = generate_forced_fallback_content(caption, image_description)
+                    # Generar artículo SEO con prompt periodístico
+                    image_description = f"Imagen relacionada con: {caption}"
+                    article_data = generate_seo_article(image_description, caption)
                     
-                    # Publicar artículo con método mejorado
-                    post_id = publish_seo_article_to_wordpress_enhanced(
+                    # Publicar artículo
+                    post_id = publish_seo_article_to_wordpress(
                         article_data, 
                         attachment_id, 
                         wp_image_url, 
                         alt_text
                     )
                     
-                    logger.critical(f"=== v5.3.2: PROCESO COMPLETADO EXITOSAMENTE ===")
-                    logger.critical(f"v5.3.2: Post ID: {post_id}, Attachment ID: {attachment_id}")
-                    
                     return jsonify({
                         "status": "success",
                         "post_id": post_id,
                         "attachment_id": attachment_id,
-                        "message": "v5.3.2: Artículo SEO creado exitosamente con fallback forzado",
-                        "version": "5.3.2_fallback_forced"
+                        "message": "v5.3.4: Artículo creado con prompt periodístico mejorado",
+                        "version": "5.3.4"
                     })
                     
                 except Exception as e:
-                    logger.error(f"v5.3.2: Error procesando imagen y artículo: {e}")
-                    return jsonify({"status": "error", "message": str(e), "version": "5.3.2"}), 500
+                    logger.error(f"Error procesando: {e}")
+                    return jsonify({"status": "error", "message": str(e)}), 500
             else:
-                logger.error("v5.3.2: No se pudo obtener información del archivo")
                 return jsonify({"status": "error", "message": "No se pudo obtener la imagen"}), 400
         
         return jsonify({"status": "ok"})
         
     except Exception as e:
-        logger.error(f"v5.3.2: Error en webhook: {e}")
+        logger.error(f"Error en webhook: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Endpoint de verificación de salud v5.3.2."""
-    logger.info("v5.3.2: Health check solicitado")
-    return jsonify({
-        "status": "healthy", 
-        "timestamp": datetime.now().isoformat(),
-        "version": "5.3.2_ultra_agresiva"
-    })
-
-@app.route('/test', methods=['GET'])
-def test_version():
-    """Endpoint para verificar que versión está corriendo."""
-    return jsonify({
-        "version": "5.3.2",
-        "description": "Ultra-agresiva con fallback forzado",
-        "timestamp": datetime.now().isoformat()
-    })
+    """Endpoint de verificación de salud."""
+    return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
 
 if __name__ == '__main__':
-    logger.critical("=== v5.3.2: INICIANDO SERVIDOR ===")
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
