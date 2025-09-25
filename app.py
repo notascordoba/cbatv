@@ -1,9 +1,10 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.5
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.6
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se vuelve al prompt original de qw.txt, pero con logging
+ESTADO: CORREGIDO — Se corrige error de sintaxis en create_wordpress_post
 MEJORAS:
+✅ Se corrige error de sintaxis: article_data: dict
 ✅ Se mantiene el prompt original de qw.txt
 ✅ Se mantiene logging mejorado
 ✅ Se corrige error de sintaxis en webhook
@@ -158,7 +159,7 @@ async def upload_image_to_wp(image_url: str, alt_text: str, filename: str) -> tu
         return None, None
 
 # Crear post en WordPress
-async def create_wordpress_post(article_ dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
+async def create_wordpress_post(article_data: dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
     if not wp_client:
         return None, None
 
@@ -287,7 +288,7 @@ def webhook():
 def health():
     return jsonify({
         'status': 'running',
-        'version': '6.5.5',
+        'version': '6.5.6',
         'wp_connected': wp_client is not None,
         'categories': existing_categories
     })
