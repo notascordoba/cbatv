@@ -1,9 +1,10 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.16
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.17
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se eliminan enlaces salientes del contenido
+ESTADO: CORREGIDO — Se corrige error de sintaxis y se mantienen mejoras anteriores
 MEJORAS:
+✅ Se corrige error de sintaxis en create_wordpress_post
 ✅ Se corrige alt text de imagen destacada
 ✅ Se limitan los tags a 3
 ✅ Se limita la meta descripción a 150 caracteres
@@ -308,7 +309,7 @@ app = Flask(__name__)
 def webhook():
     try:
         data = request.get_json()
-        if not data or 'message' not in   # ← CORREGIDO AQUÍ
+        if not data or 'message' not in data:  # ← CORREGIDO AQUÍ
             return jsonify({'ok': True})
 
         message = data['message']
@@ -325,7 +326,7 @@ def webhook():
 def health():
     return jsonify({
         'status': 'running',
-        'version': '6.5.16',
+        'version': '6.5.17',
         'wp_connected': wp_client is not None,
         'categories': existing_categories
     })
