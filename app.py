@@ -1,10 +1,10 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.10
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.11
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se corrige error de sintaxis en create_wordpress_post
+ESTADO: CORREGIDO — Se agrega logging para ver respuesta de Groq
 MEJORAS:
-✅ Se corrige error de sintaxis: article_data: dict
+✅ Se loguea la respuesta cruda de Groq para ver qué falla
 ✅ Se mantiene el prompt original de qw.txt
 ✅ Se mantiene logging mejorado
 ✅ Se corrige error de sintaxis en webhook
@@ -123,14 +123,14 @@ REGLAS:
         )
         raw = completion.choices[0].message.content
         logger.info("✅ Respuesta recibida de Groq. Procesando JSON...")
-        logger.debug(f"Respuesta cruda de Groq: {raw[:1000]}...")  # Loguea los primeros 1000 caracteres
+        logger.info(f"Respuesta cruda de Groq: {raw[:1000]}...")  # Loguea los primeros 1000 caracteres como INFO
         result = extract_json_robust(raw)
         if result:
             logger.info("✅ JSON extraído correctamente.")
             return result
         else:
             logger.error("❌ No se pudo extraer un JSON válido de la respuesta de Groq.")
-            logger.debug(f"Respuesta cruda de Groq: {raw[:1000]}...")  # Loguea de nuevo en caso de error
+            logger.info(f"Respuesta cruda de Groq: {raw[:1000]}...")  # Loguea de nuevo en caso de error
             return None
     except Exception as e:
         logger.error(f"❌ Error con Groq: {e}")
@@ -160,7 +160,7 @@ async def upload_image_to_wp(image_url: str, alt_text: str, filename: str) -> tu
         return None, None
 
 # Crear post en WordPress
-async def create_wordpress_post(article_data: dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
+async def create_wordpress_post(article_ dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
     if not wp_client:
         return None, None
 
@@ -289,7 +289,7 @@ def webhook():
 def health():
     return jsonify({
         'status': 'running',
-        'version': '6.5.10',
+        'version': '6.5.11',
         'wp_connected': wp_client is not None,
         'categories': existing_categories
     })
