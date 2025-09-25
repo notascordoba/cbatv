@@ -1,12 +1,12 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.4
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.5
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se corrige error de sintaxis en webhook
+ESTADO: CORREGIDO — Se vuelve al prompt original de qw.txt, pero con logging
 MEJORAS:
-✅ Corrección de error de sintaxis: 'message' not in data
-✅ Se mantiene todas las correcciones de SEO de v6.5.3
-✅ Se elimina lectura de tags existentes (pueden inventarse)
+✅ Se mantiene el prompt original de qw.txt
+✅ Se mantiene logging mejorado
+✅ Se corrige error de sintaxis en webhook
 """
 import os
 import logging
@@ -91,29 +91,26 @@ def extract_json_robust(text: str) -> Optional[dict]:
             pass
     return None
 
-# Generar contenido SEO con Groq
+# Generar contenido SEO con Groq (prompt original de qw.txt)
 async def generate_seo_content(caption: str) -> Optional[dict]:
-    prompt = f"""
-Eres un periodista argentino experto en SEO. Convierte esta información en un artículo periodístico completo y optimizado:
+    prompt = f"""Eres un periodista argentino experto en SEO. Convierte esta información en un artículo periodístico completo y optimizado:
 INFORMACIÓN: {caption}
 Responde ÚNICAMENTE con un JSON válido con esta estructura exacta:
 {{
     "keyword_principal": "frase clave objetivo (2-3 palabras)",
-    "titulo": "Keyword Principal: Título periodístico llamativo (30-70 caracteres)",
+    "titulo": "Título periodístico llamativo (30-70 caracteres)",
     "slug": "titulo-seo-amigable",
-    "meta_descripcion": "Meta descripción real y atractiva, <= 156 caracteres, con la keyword y buen gancho",
-    "contenido_html": "Artículo en HTML con <h1>, <h2>, <h3>, <p>, <strong>, <ul>, <li>. Mínimo 500 palabras. Incluye 1 enlace interno (elige entre: {', '.join(existing_categories) if existing_categories else 'actualidad'}). NO enlaces salientes a otros medios. Usa comillas simples. Repite la keyword 4-6 veces.",
-    "tags": ["keyword_principal", "tag2", "tag3", "tag4", "tag5"],
-    "alt_text": "Descripción SEO de la imagen (máx. 120 caracteres, específica)",
+    "meta_descripcion": "Meta descripción exacta de 130 caracteres con la keyword y buen gancho",
+    "contenido_html": "Artículo en HTML con <h1>, <h2>, <h3>, <p>, <strong>, <ul>, <li>. Mínimo 600 palabras. Incluye 1 enlace interno (ej: '/internacional/') y 1 enlace externo (ej: 'https://www.bbc.com/mundo'). Usa comillas simples. Repite la keyword al menos 5 veces.",
+    "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+    "alt_text": "Descripción SEO de la imagen (máx. 120 caracteres)",
     "categoria": "Categoría principal (elige entre: {', '.join(existing_categories) if existing_categories else 'Actualidad, Internacional, Política'})"
 }}
 REGLAS:
 - keyword_principal: específica y relevante
-- titulo: keyword al inicio
-- meta_descripcion: <= 156 caracteres, sin "prompt"
-- contenido_html: mínimo 500 palabras, sin comillas dobles, sin &quot;, repite keyword 4-6 veces, NO enlaces a otros medios
+- meta_descripcion: exactamente 130 caracteres
+- contenido_html: mínimo 600 palabras, sin comillas dobles, sin &quot;
 - categoría: NO inventes, usa solo las permitidas
-- tags: incluye keyword_principal como primer tag
 """
     try:
         logger.info("🔍 Enviando solicitud a Groq...")
@@ -121,7 +118,7 @@ REGLAS:
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.4,
-            max_tokens=8000
+            max_tokens=3000
         )
         raw = completion.choices[0].message.content
         logger.info("✅ Respuesta recibida de Groq. Procesando JSON...")
@@ -177,7 +174,7 @@ async def create_wordpress_post(article_ dict, image_url: Optional[str], attachm
     # Contenido
     content = ""
     if image_url:
-        content += f"<figure><img src='{image_url}' alt='{article_data['alt_text']}' title='{article_data['alt_text']}' class='wp-image-featured' style='width:100%; margin-bottom:20px;'></figure>\n"
+        content += f"<img src='{image_url}' alt='{article_data['alt_text']}' class='wp-image-featured' style='width:100%; margin-bottom:20px;'>\n"
     content += article_data['contenido_html']
 
     post.content = content
@@ -229,10 +226,8 @@ async def process_telegram_message(message: dict):
             await bot.send_message(chat_id=chat_id, text="❌ Error: no se pudo generar el artículo.")
             return
 
-        # Renombrar imagen con keyword
-        filename = f"{safe_filename(article['keyword_principal'])}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-
         # Subir imagen
+        filename = f"{safe_filename(article['titulo'])}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
         wp_img_url, att_id = await upload_image_to_wp(image_url, article['alt_text'], filename)
 
         if not wp_img_url:
@@ -292,7 +287,7 @@ def webhook():
 def health():
     return jsonify({
         'status': 'running',
-        'version': '6.5.4',
+        'version': '6.5.5',
         'wp_connected': wp_client is not None,
         'categories': existing_categories
     })
