@@ -1,13 +1,14 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.13
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.14
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se corrige error de sintaxis en create_wordpress_post
+ESTADO: CORREGIDO — Se mejora extract_json_robust para manejar saltos de línea
 MEJORAS:
-✅ Se corrige error de sintaxis: article_data: dict
+✅ Se corrige error de sintaxis: article_ dict
 ✅ Se mantiene el prompt original de qw.txt
 ✅ Se mantiene logging mejorado
 ✅ Se corrige error de sintaxis en webhook
+✅ Se mejora extract_json_robust para manejar saltos de línea y tabulaciones
 """
 import os
 import logging
@@ -68,7 +69,7 @@ def safe_filename(text: str) -> str:
     text = re.sub(r'[-\s]+', '-', text)
     return text[:50] or 'imagen'
 
-# Extracción robusta de JSON
+# Extracción robusta de JSON - MEJORADA
 def extract_json_robust(text: str) -> Optional[dict]:
     text = text.strip()
     # Estrategia 1: JSON directo
@@ -76,18 +77,34 @@ def extract_json_robust(text: str) -> Optional[dict]:
         return json.loads(text)
     except:
         pass
+
     # Estrategia 2: ```json ... ```
     match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
     if match:
+        json_text = match.group(1).strip()
+        # Limpiar saltos de línea y tabulaciones dentro de cadenas JSON
+        json_text = re.sub(r'\\n', r'\\n', json_text) # Escapar \n
+        json_text = re.sub(r'\\t', r'\\t', json_text) # Escapar \t
+        # Reemplazar saltos de línea no escapados dentro de cadenas
+        # Busca comillas, contenido con saltos, comillas, y reemplaza \n sin escapar
+        # Esto es más delicado, intentemos escapar los \n sin escapar
+        json_text = re.sub(r'(?<=")([^"]*?)\n([^"]*?)(?=")', lambda m: m.group(1).replace('\n', '\\n') + m.group(2).replace('\n', '\\n'), json_text)
+        json_text = re.sub(r'(?<=")([^"]*?)\t([^"]*?)(?=")', lambda m: m.group(1).replace('\t', '\\t') + m.group(2).replace('\t', '\\t'), json_text)
+
         try:
-            return json.loads(match.group(1).strip())
+            return json.loads(json_text)
         except:
             pass
+
     # Estrategia 3: buscar {...}
     match = re.search(r'\{.*\}', text, re.DOTALL)
     if match:
+        json_text = match.group(0)
+        # Aplicar limpieza similar
+        json_text = re.sub(r'(?<=")([^"]*?)\n([^"]*?)(?=")', lambda m: m.group(1).replace('\n', '\\n') + m.group(2).replace('\n', '\\n'), json_text)
+        json_text = re.sub(r'(?<=")([^"]*?)\t([^"]*?)(?=")', lambda m: m.group(1).replace('\t', '\\t') + m.group(2).replace('\t', '\\t'), json_text)
         try:
-            return json.loads(match.group(0))
+            return json.loads(json_text)
         except:
             pass
     return None
@@ -289,7 +306,7 @@ def webhook():
 def health():
     return jsonify({
         'status': 'running',
-        'version': '6.5.13',
+        'version': '6.5.14',
         'wp_connected': wp_client is not None,
         'categories': existing_categories
     })
