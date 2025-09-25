@@ -1,10 +1,10 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.6
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.7
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se corrige error de sintaxis en create_wordpress_post
+ESTADO: CORREGIDO — Se agrega logging para ver respuesta de Groq
 MEJORAS:
-✅ Se corrige error de sintaxis: article_data: dict
+✅ Se loguea la respuesta cruda de Groq para ver qué falla
 ✅ Se mantiene el prompt original de qw.txt
 ✅ Se mantiene logging mejorado
 ✅ Se corrige error de sintaxis en webhook
@@ -123,13 +123,14 @@ REGLAS:
         )
         raw = completion.choices[0].message.content
         logger.info("✅ Respuesta recibida de Groq. Procesando JSON...")
+        logger.debug(f"Respuesta cruda de Groq: {raw[:1000]}...")  # Loguea los primeros 1000 caracteres
         result = extract_json_robust(raw)
         if result:
             logger.info("✅ JSON extraído correctamente.")
             return result
         else:
             logger.error("❌ No se pudo extraer un JSON válido de la respuesta de Groq.")
-            logger.debug(f"Respuesta cruda de Groq: {raw[:500]}...")  # Solo los primeros 500 chars
+            logger.debug(f"Respuesta cruda de Groq: {raw[:1000]}...")  # Loguea de nuevo en caso de error
             return None
     except Exception as e:
         logger.error(f"❌ Error con Groq: {e}")
@@ -228,72 +229,4 @@ async def process_telegram_message(message: dict):
             return
 
         # Subir imagen
-        filename = f"{safe_filename(article['titulo'])}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        wp_img_url, att_id = await upload_image_to_wp(image_url, article['alt_text'], filename)
-
-        if not wp_img_url:
-            bot = Bot(token=TELEGRAM_BOT_TOKEN)
-            await bot.send_message(chat_id=chat_id, text="❌ Error: no se pudo subir la imagen.")
-            return
-
-        # Crear post
-        post_id, edit_url = await create_wordpress_post(article, wp_img_url, att_id)
-
-        if post_id:
-            response = f"""✅ **Artículo SEO creado como BORRADOR**
-📝 **Título**: {article['titulo']}
-🎯 **Keyword**: {article['keyword_principal']}
-📊 **Meta descripción**: {len(article['meta_descripcion'])} caracteres
-🏷️ **Tags**: {', '.join(article['tags'])}
-📁 **Categoría**: {article.get('categoria', 'N/A')}
-🖼️ **Imagen destacada**: ✅ Configurada
-📄 **Nombre archivo**: {filename}
-📝 **Estado**: BORRADOR
-🔗 **Editar**: {edit_url}
-⚠️ **Revísalo y publícalo desde WordPress**
-"""
-            bot = Bot(token=TELEGRAM_BOT_TOKEN)
-            await bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-        else:
-            bot = Bot(token=TELEGRAM_BOT_TOKEN)
-            await bot.send_message(chat_id=chat_id, text="❌ Error al crear el artículo en WordPress.")
-    except KeyError as e:
-        logger.error(f"❌ Error de clave faltante en mensaje de Telegram: {e}")
-        bot = Bot(token=TELEGRAM_BOT_TOKEN)
-        await bot.send_message(chat_id=chat_id, text="❌ Error: mensaje incompleto.")
-    except Exception as e:
-        logger.error(f"Error procesando mensaje: {e}")
-
-# Flask app
-app = Flask(__name__)
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    try:
-        data = request.get_json()
-        if not data or 'message' not in data:  # ← CORREGIDO AQUÍ
-            return jsonify({'ok': True})
-
-        message = data['message']
-        if 'photo' not in message or 'caption' not in message:
-            return jsonify({'ok': True})
-
-        asyncio.run(process_telegram_message(message))
-        return jsonify({'ok': True})
-    except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return jsonify({'ok': False}), 500
-
-@app.route('/', methods=['GET'])
-def health():
-    return jsonify({
-        'status': 'running',
-        'version': '6.5.6',
-        'wp_connected': wp_client is not None,
-        'categories': existing_categories
-    })
-
-if __name__ == '__main__':
-    init_wordpress()
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+        filename = f"{safe_filename(article['titulo'])}_{datetime.now().strftime('%Y%m%d_%H%M%S')
