@@ -1,10 +1,10 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.11
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.12
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se agrega logging para ver respuesta de Groq
+ESTADO: CORREGIDO — Se corrige error de sintaxis en create_wordpress_post
 MEJORAS:
-✅ Se loguea la respuesta cruda de Groq para ver qué falla
+✅ Se corrige error de sintaxis: article_ dict
 ✅ Se mantiene el prompt original de qw.txt
 ✅ Se mantiene logging mejorado
 ✅ Se corrige error de sintaxis en webhook
@@ -272,7 +272,7 @@ app = Flask(__name__)
 def webhook():
     try:
         data = request.get_json()
-        if not data or 'message' not in data:  # ← CORREGIDO AQUÍ
+        if not data or 'message' not in   # ← CORREGIDO AQUÍ
             return jsonify({'ok': True})
 
         message = data['message']
@@ -289,7 +289,7 @@ def webhook():
 def health():
     return jsonify({
         'status': 'running',
-        'version': '6.5.11',
+        'version': '6.5.12',
         'wp_connected': wp_client is not None,
         'categories': existing_categories
     })
