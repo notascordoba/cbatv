@@ -1,10 +1,10 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.8
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.9
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se corrige error de sintaxis en filename
+ESTADO: CORREGIDO — Se corrige error de sintaxis en línea 187
 MEJORAS:
-✅ Se corrige error de sintaxis: falta paréntesis en filename
+✅ Se corrige error de sintaxis: cadena sin cerrar en SEO fields
 ✅ Se mantiene el prompt original de qw.txt
 ✅ Se mantiene logging mejorado
 ✅ Se corrige error de sintaxis en webhook
@@ -160,7 +160,7 @@ async def upload_image_to_wp(image_url: str, alt_text: str, filename: str) -> tu
         return None, None
 
 # Crear post en WordPress
-async def create_wordpress_post(article_data: dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
+async def create_wordpress_post(article_ dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
     if not wp_client:
         return None, None
 
@@ -184,4 +184,117 @@ async def create_wordpress_post(article_data: dict, image_url: Optional[str], at
     # SEO
     post.custom_fields = [
         {'key': '_yoast_wpseo_metadesc', 'value': article_data['meta_descripcion']},
-        {'key
+        {'key': '_aioseop_description', 'value': article_data['meta_descripcion']},
+        {'key': '_yoast_wpseo_focuskw', 'value': article_data['keyword_principal']}
+    ]
+
+    # Taxonomía
+    post.terms_names = {
+        'post_tag': article_data['tags'],
+        'category': [categoria]
+    }
+
+    # Imagen destacada
+    if attachment_id:
+        post.thumbnail = attachment_id
+
+    post.post_status = 'draft'  # ← BORRADOR
+    post_id = wp_client.call(NewPost(post))
+    edit_url = f"{WORDPRESS_URL.rstrip('/')}/wp-admin/post.php?post={post_id}&action=edit"
+
+    return post_id, edit_url
+
+# Procesar mensaje de Telegram
+async def process_telegram_message(message: dict):
+    try:
+        caption = message.get('caption', 'Contenido de actualidad')
+        photo = message['photo'][-1]  # ← Índice correcto
+        file_id = photo['file_id']
+        chat_id = message['chat']['id']
+
+        file_info_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
+        file_resp = requests.get(file_info_url).json()
+        if not file_resp.get('ok'):
+            logger.error("❌ No se pudo obtener la info del archivo de Telegram.")
+            return
+
+        file_path = file_resp['result']['file_path']
+        image_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+
+        # Generar contenido
+        article = await generate_seo_content(caption)
+        if not article:
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            await bot.send_message(chat_id=chat_id, text="❌ Error: no se pudo generar el artículo.")
+            return
+
+        # Subir imagen
+        filename = f"{safe_filename(article['titulo'])}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+        wp_img_url, att_id = await upload_image_to_wp(image_url, article['alt_text'], filename)
+
+        if not wp_img_url:
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            await bot.send_message(chat_id=chat_id, text="❌ Error: no se pudo subir la imagen.")
+            return
+
+        # Crear post
+        post_id, edit_url = await create_wordpress_post(article, wp_img_url, att_id)
+
+        if post_id:
+            response = f"""✅ **Artículo SEO creado como BORRADOR**
+📝 **Título**: {article['titulo']}
+🎯 **Keyword**: {article['keyword_principal']}
+📊 **Meta descripción**: {len(article['meta_descripcion'])} caracteres
+🏷️ **Tags**: {', '.join(article['tags'])}
+📁 **Categoría**: {article.get('categoria', 'N/A')}
+🖼️ **Imagen destacada**: ✅ Configurada
+📄 **Nombre archivo**: {filename}
+📝 **Estado**: BORRADOR
+🔗 **Editar**: {edit_url}
+⚠️ **Revísalo y publícalo desde WordPress**
+"""
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            await bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+        else:
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            await bot.send_message(chat_id=chat_id, text="❌ Error al crear el artículo en WordPress.")
+    except KeyError as e:
+        logger.error(f"❌ Error de clave faltante en mensaje de Telegram: {e}")
+        bot = Bot(token=TELEGRAM_BOT_TOKEN)
+        await bot.send_message(chat_id=chat_id, text="❌ Error: mensaje incompleto.")
+    except Exception as e:
+        logger.error(f"Error procesando mensaje: {e}")
+
+# Flask app
+app = Flask(__name__)
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    try:
+        data = request.get_json()
+        if not data or 'message' not in data:  # ← CORREGIDO AQUÍ
+            return jsonify({'ok': True})
+
+        message = data['message']
+        if 'photo' not in message or 'caption' not in message:
+            return jsonify({'ok': True})
+
+        asyncio.run(process_telegram_message(message))
+        return jsonify({'ok': True})
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return jsonify({'ok': False}), 500
+
+@app.route('/', methods=['GET'])
+def health():
+    return jsonify({
+        'status': 'running',
+        'version': '6.5.9',
+        'wp_connected': wp_client is not None,
+        'categories': existing_categories
+    })
+
+if __name__ == '__main__':
+    init_wordpress()
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
