@@ -1,14 +1,19 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.14
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.16
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se mejora extract_json_robust para manejar saltos de línea
+ESTADO: CORREGIDO — Se eliminan enlaces salientes del contenido
 MEJORAS:
-✅ Se corrige error de sintaxis: article_ dict
-✅ Se mantiene el prompt original de qw.txt
+✅ Se corrige alt text de imagen destacada
+✅ Se limitan los tags a 3
+✅ Se limita la meta descripción a 150 caracteres
+✅ Se reduce la densidad de keyword a 6-8 veces
+✅ Se incluye keyword en el alt text de la imagen
+✅ Se coloca la keyword al inicio del título
+✅ Se eliminan enlaces salientes del contenido HTML
 ✅ Se mantiene logging mejorado
 ✅ Se corrige error de sintaxis en webhook
-✅ Se mejora extract_json_robust para manejar saltos de línea y tabulaciones
+✅ Se mejora extract_json_robust
 """
 import os
 import logging
@@ -83,11 +88,6 @@ def extract_json_robust(text: str) -> Optional[dict]:
     if match:
         json_text = match.group(1).strip()
         # Limpiar saltos de línea y tabulaciones dentro de cadenas JSON
-        json_text = re.sub(r'\\n', r'\\n', json_text) # Escapar \n
-        json_text = re.sub(r'\\t', r'\\t', json_text) # Escapar \t
-        # Reemplazar saltos de línea no escapados dentro de cadenas
-        # Busca comillas, contenido con saltos, comillas, y reemplaza \n sin escapar
-        # Esto es más delicado, intentemos escapar los \n sin escapar
         json_text = re.sub(r'(?<=")([^"]*?)\n([^"]*?)(?=")', lambda m: m.group(1).replace('\n', '\\n') + m.group(2).replace('\n', '\\n'), json_text)
         json_text = re.sub(r'(?<=")([^"]*?)\t([^"]*?)(?=")', lambda m: m.group(1).replace('\t', '\\t') + m.group(2).replace('\t', '\\t'), json_text)
 
@@ -109,26 +109,29 @@ def extract_json_robust(text: str) -> Optional[dict]:
             pass
     return None
 
-# Generar contenido SEO con Groq (prompt original de qw.txt)
+# Generar contenido SEO con Groq (prompt optimizado para Yoast y sin enlaces salientes)
 async def generate_seo_content(caption: str) -> Optional[dict]:
     prompt = f"""Eres un periodista argentino experto en SEO. Convierte esta información en un artículo periodístico completo y optimizado:
 INFORMACIÓN: {caption}
 Responde ÚNICAMENTE con un JSON válido con esta estructura exacta:
 {{
     "keyword_principal": "frase clave objetivo (2-3 palabras)",
-    "titulo": "Título periodístico llamativo (30-70 caracteres)",
+    "titulo": "Keyword Principal: Título periodístico llamativo (30-70 caracteres)",
     "slug": "titulo-seo-amigable",
-    "meta_descripcion": "Meta descripción exacta de 130 caracteres con la keyword y buen gancho",
-    "contenido_html": "Artículo en HTML con <h1>, <h2>, <h3>, <p>, <strong>, <ul>, <li>. Mínimo 600 palabras. Incluye 1 enlace interno (ej: '/internacional/') y 1 enlace externo (ej: 'https://www.bbc.com/mundo'). Usa comillas simples. Repite la keyword al menos 5 veces.",
-    "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-    "alt_text": "Descripción SEO de la imagen (máx. 120 caracteres)",
+    "meta_descripcion": "Meta descripción de máximo 150 caracteres con la keyword y buen gancho",
+    "contenido_html": "Artículo en HTML con <h1>, <h2>, <h3>, <p>, <strong>, <ul>, <li>. Mínimo 600 palabras. Incluye 1 enlace interno (elige entre: {', '.join(existing_categories) if existing_categories else 'actualidad'}). NO incluyas enlaces salientes a otros medios. Usa comillas simples. Repite la keyword 6-8 veces.",
+    "tags": ["keyword_principal", "tag2", "tag3"],
+    "alt_text": "Descripción SEO de la imagen (máx. 120 caracteres) que incluye la keyword principal",
     "categoria": "Categoría principal (elige entre: {', '.join(existing_categories) if existing_categories else 'Actualidad, Internacional, Política'})"
 }}
 REGLAS:
 - keyword_principal: específica y relevante
-- meta_descripcion: exactamente 130 caracteres
-- contenido_html: mínimo 600 palabras, sin comillas dobles, sin &quot;
+- titulo: debe comenzar con la keyword_principal
+- meta_descripcion: máximo 150 caracteres
+- contenido_html: mínimo 600 palabras, sin comillas dobles, sin &quot;, repite keyword 6-8 veces, NO enlaces salientes
 - categoría: NO inventes, usa solo las permitidas
+- tags: incluye keyword_principal como primer tag, solo 3 tags
+- alt_text: debe incluir la keyword principal
 """
     try:
         logger.info("🔍 Enviando solicitud a Groq...")
@@ -171,13 +174,22 @@ async def upload_image_to_wp(image_url: str, alt_text: str, filename: str) -> tu
             'overwrite': True
         }
         response = wp_client.call(UploadFile(data))
-        return response['url'], response['id']
+        # Actualizar el 'alt' del archivo adjunto
+        attachment_id = response['id']
+        # Crear un nuevo objeto WordPressPost solo para actualizar el alt
+        from wordpress_xmlrpc.methods.posts import GetPost, EditPost
+        attachment_post = wp_client.call(GetPost(attachment_id))
+        attachment_post.title = filename
+        attachment_post.post_excerpt = alt_text  # Este campo a veces se usa como alt
+        attachment_post.post_content = alt_text  # Este campo a veces se usa como alt
+        wp_client.call(EditPost(attachment_id, attachment_post))
+        return response['url'], attachment_id
     except Exception as e:
         logger.error(f"Error subiendo imagen: {e}")
         return None, None
 
 # Crear post en WordPress
-async def create_wordpress_post(article_data: dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
+async def create_wordpress_post(article_ dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
     if not wp_client:
         return None, None
 
@@ -194,7 +206,14 @@ async def create_wordpress_post(article_data: dict, image_url: Optional[str], at
     content = ""
     if image_url:
         content += f"<img src='{image_url}' alt='{article_data['alt_text']}' class='wp-image-featured' style='width:100%; margin-bottom:20px;'>\n"
-    content += article_data['contenido_html']
+    # Eliminar enlaces salientes del contenido HTML
+    contenido_html = article_data['contenido_html']
+    # Expresión regular para encontrar enlaces <a> que no apunten al dominio local
+    # Esta expresión busca <a href="...">...</a> donde el href NO empieza con el dominio o es relativo
+    dominio = WORDPRESS_URL.split('/')[2]  # Extrae el dominio del WORDPRESS_URL
+    enlace_saliente_pattern = re.compile(r'<a\s+href="(?!https?://' + re.escape(dominio) + r'[/\w]*|/)[^"]*"[^>]*>.*?</a>', re.IGNORECASE)
+    contenido_html = enlace_saliente_pattern.sub(lambda match: match.group(0).split('>')[1].split('<')[0], contenido_html) # Reemplaza el enlace con solo el texto interno
+    content += contenido_html
 
     post.content = content
 
@@ -289,7 +308,7 @@ app = Flask(__name__)
 def webhook():
     try:
         data = request.get_json()
-        if not data or 'message' not in data:  # ← CORREGIDO AQUÍ
+        if not data or 'message' not in   # ← CORREGIDO AQUÍ
             return jsonify({'ok': True})
 
         message = data['message']
@@ -306,7 +325,7 @@ def webhook():
 def health():
     return jsonify({
         'status': 'running',
-        'version': '6.5.14',
+        'version': '6.5.16',
         'wp_connected': wp_client is not None,
         'categories': existing_categories
     })
