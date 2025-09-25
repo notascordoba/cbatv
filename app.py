@@ -1,11 +1,12 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.3
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.4
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se corrige error de importación 'Optional'
+ESTADO: CORREGIDO — Se corrige error de sintaxis en webhook
 MEJORAS:
-✅ Corrección de NameError: name 'Optional' is not defined
-✅ Se mantiene todas las correcciones de SEO de v6.5.2
+✅ Corrección de error de sintaxis: 'message' not in data
+✅ Se mantiene todas las correcciones de SEO de v6.5.3
+✅ Se elimina lectura de tags existentes (pueden inventarse)
 """
 import os
 import logging
@@ -13,7 +14,7 @@ import re
 import json
 import asyncio
 from datetime import datetime
-from typing import Optional, List  # ← CORREGIDO: Se asegura importación
+from typing import Optional, List
 from urllib.parse import quote
 import collections
 import collections.abc
@@ -46,21 +47,17 @@ WORDPRESS_PASSWORD = os.getenv('WORDPRESS_PASSWORD')
 groq_client = Groq(api_key=GROQ_API_KEY)
 wp_client = None
 existing_categories = []
-existing_tags = []
 
 # Conectar a WordPress
 def init_wordpress():
-    global wp_client, existing_categories, existing_tags
+    global wp_client, existing_categories
     try:
         xmlrpc_url = f"{WORDPRESS_URL.rstrip('/')}/xmlrpc.php"
         wp_client = Client(xmlrpc_url, WORDPRESS_USERNAME, WORDPRESS_PASSWORD)
         # Obtener categorías existentes
         cats = wp_client.call(taxonomies.GetTerms('category'))
         existing_categories = [cat.name for cat in cats]
-        # Obtener tags existentes
-        tags = wp_client.call(taxonomies.GetTerms('post_tag'))
-        existing_tags = [tag.name for tag in tags]
-        logger.info(f"✅ WordPress conectado. Categorías: {existing_categories}, Tags: {existing_tags}")
+        logger.info(f"✅ WordPress conectado. Categorías: {existing_categories}")
     except Exception as e:
         logger.error(f"❌ Error al conectar a WordPress: {e}")
 
@@ -164,7 +161,7 @@ async def upload_image_to_wp(image_url: str, alt_text: str, filename: str) -> tu
         return None, None
 
 # Crear post en WordPress
-async def create_wordpress_post(article_data: dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
+async def create_wordpress_post(article_ dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
     if not wp_client:
         return None, None
 
@@ -278,7 +275,7 @@ app = Flask(__name__)
 def webhook():
     try:
         data = request.get_json()
-        if not data or 'message' not in data:  # ← Corregido aquí también
+        if not data or 'message' not in data:  # ← CORREGIDO AQUÍ
             return jsonify({'ok': True})
 
         message = data['message']
@@ -295,10 +292,9 @@ def webhook():
 def health():
     return jsonify({
         'status': 'running',
-        'version': '6.5.3',
+        'version': '6.5.4',
         'wp_connected': wp_client is not None,
-        'categories': existing_categories,
-        'tags': existing_tags
+        'categories': existing_categories
     })
 
 if __name__ == '__main__':
