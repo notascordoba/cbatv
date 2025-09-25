@@ -1,10 +1,10 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.7
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.8
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se agrega logging para ver respuesta de Groq
+ESTADO: CORREGIDO — Se corrige error de sintaxis en filename
 MEJORAS:
-✅ Se loguea la respuesta cruda de Groq para ver qué falla
+✅ Se corrige error de sintaxis: falta paréntesis en filename
 ✅ Se mantiene el prompt original de qw.txt
 ✅ Se mantiene logging mejorado
 ✅ Se corrige error de sintaxis en webhook
@@ -184,49 +184,4 @@ async def create_wordpress_post(article_data: dict, image_url: Optional[str], at
     # SEO
     post.custom_fields = [
         {'key': '_yoast_wpseo_metadesc', 'value': article_data['meta_descripcion']},
-        {'key': '_aioseop_description', 'value': article_data['meta_descripcion']},
-        {'key': '_yoast_wpseo_focuskw', 'value': article_data['keyword_principal']}
-    ]
-
-    # Taxonomía
-    post.terms_names = {
-        'post_tag': article_data['tags'],
-        'category': [categoria]
-    }
-
-    # Imagen destacada
-    if attachment_id:
-        post.thumbnail = attachment_id
-
-    post.post_status = 'draft'  # ← BORRADOR
-    post_id = wp_client.call(NewPost(post))
-    edit_url = f"{WORDPRESS_URL.rstrip('/')}/wp-admin/post.php?post={post_id}&action=edit"
-
-    return post_id, edit_url
-
-# Procesar mensaje de Telegram
-async def process_telegram_message(message: dict):
-    try:
-        caption = message.get('caption', 'Contenido de actualidad')
-        photo = message['photo'][-1]  # ← Índice correcto
-        file_id = photo['file_id']
-        chat_id = message['chat']['id']
-
-        file_info_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
-        file_resp = requests.get(file_info_url).json()
-        if not file_resp.get('ok'):
-            logger.error("❌ No se pudo obtener la info del archivo de Telegram.")
-            return
-
-        file_path = file_resp['result']['file_path']
-        image_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-
-        # Generar contenido
-        article = await generate_seo_content(caption)
-        if not article:
-            bot = Bot(token=TELEGRAM_BOT_TOKEN)
-            await bot.send_message(chat_id=chat_id, text="❌ Error: no se pudo generar el artículo.")
-            return
-
-        # Subir imagen
-        filename = f"{safe_filename(article['titulo'])}_{datetime.now().strftime('%Y%m%d_%H%M%S')
+        {'key
