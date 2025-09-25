@@ -1,8 +1,8 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.17
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.18
 ===============================================
 FECHA: 2025-09-26
-ESTADO: CORREGIDO — Se corrige error de sintaxis y se mantienen mejoras anteriores
+ESTADO: CORREGIDO — Se corrige error de sintaxis en create_wordpress_post
 MEJORAS:
 ✅ Se corrige error de sintaxis en create_wordpress_post
 ✅ Se corrige alt text de imagen destacada
@@ -190,7 +190,7 @@ async def upload_image_to_wp(image_url: str, alt_text: str, filename: str) -> tu
         return None, None
 
 # Crear post en WordPress
-async def create_wordpress_post(article_ dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
+async def create_wordpress_post(article_data: dict, image_url: Optional[str], attachment_id: Optional[int]) -> tuple[Optional[int], Optional[str]]:
     if not wp_client:
         return None, None
 
@@ -326,7 +326,7 @@ def webhook():
 def health():
     return jsonify({
         'status': 'running',
-        'version': '6.5.17',
+        'version': '6.5.18',
         'wp_connected': wp_client is not None,
         'categories': existing_categories
     })
