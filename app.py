@@ -1,16 +1,18 @@
 """
-TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.0
+TELEGRAM BOT SEO PROFESIONAL - VERSIÓN 6.5.1
 ===============================================
 FECHA: 2025-09-26
-ESTADO: OPTIMIZADO — Versión corregida para medios periodísticos
+ESTADO: OPTIMIZADO — Correcciones de SEO, alt text, keyword, meta descripción
 MEJORAS:
-✅ Imagen subida en 1200x675px (si es posible)
-✅ Alt text asignado en HTML y WordPress
-✅ Tags incluyen keyword principal
-✅ Contenido SEO con keyword repetida
-✅ Renombrado de imagen con keyword
-✅ Metadescripción <= 140 caracteres
-✅ Gancho en título y descripción
+✅ Alt text generado correctamente y asignado en WordPress
+✅ Meta descripción <= 156 caracteres, sin "prompt"
+✅ Keyword al inicio del título
+✅ Keyword en H2/H3
+✅ Keyword repetida 4-6 veces (no sobreoptimizada)
+✅ Sin enlaces salientes a otros medios
+✅ Solo enlaces internos válidos (existentes en WordPress)
+✅ Tags incluyen keyword como primer tag
+✅ Imagen renombrada con keyword
 """
 import os
 import logging
@@ -51,17 +53,21 @@ WORDPRESS_PASSWORD = os.getenv('WORDPRESS_PASSWORD')
 groq_client = Groq(api_key=GROQ_API_KEY)
 wp_client = None
 existing_categories = []
+existing_tags = []
 
 # Conectar a WordPress
 def init_wordpress():
-    global wp_client, existing_categories
+    global wp_client, existing_categories, existing_tags
     try:
         xmlrpc_url = f"{WORDPRESS_URL.rstrip('/')}/xmlrpc.php"
         wp_client = Client(xmlrpc_url, WORDPRESS_USERNAME, WORDPRESS_PASSWORD)
         # Obtener categorías existentes
         cats = wp_client.call(taxonomies.GetTerms('category'))
         existing_categories = [cat.name for cat in cats]
-        logger.info(f"✅ WordPress conectado. Categorías existentes: {existing_categories}")
+        # Obtener tags existentes
+        tags = wp_client.call(taxonomies.GetTerms('post_tag'))
+        existing_tags = [tag.name for tag in tags]
+        logger.info(f"✅ WordPress conectado. Categorías: {existing_categories}, Tags: {existing_tags}")
     except Exception as e:
         logger.error(f"❌ Error al conectar a WordPress: {e}")
 
@@ -103,18 +109,19 @@ INFORMACIÓN: {caption}
 Responde ÚNICAMENTE con un JSON válido con esta estructura exacta:
 {{
     "keyword_principal": "frase clave objetivo (2-3 palabras)",
-    "titulo": "Título periodístico llamativo (30-70 caracteres)",
+    "titulo": "Keyword Principal: Título periodístico llamativo (30-70 caracteres)",
     "slug": "titulo-seo-amigable",
-    "meta_descripcion": "Meta descripción exacta de 140 caracteres con la keyword y buen gancho",
-    "contenido_html": "Artículo en HTML con <h1>, <h2>, <h3>, <p>, <strong>, <ul>, <li>. Mínimo 500 palabras. Incluye 1 enlace interno (ej: '/internacional/') y 1 enlace externo (ej: 'https://www.bbc.com/mundo'). Usa comillas simples. Repite la keyword al menos 5 veces.",
+    "meta_descripcion": "Meta descripción real y atractiva, <= 156 caracteres, con la keyword y buen gancho",
+    "contenido_html": "Artículo en HTML con <h1>, <h2>, <h3>, <p>, <strong>, <ul>, <li>. Mínimo 500 palabras. Incluye 1 enlace interno (elige entre: {', '.join(existing_categories) if existing_categories else 'actualidad'}). NO enlaces salientes a otros medios. Usa comillas simples. Repite la keyword 4-6 veces.",
     "tags": ["keyword_principal", "tag2", "tag3", "tag4", "tag5"],
-    "alt_text": "Descripción SEO de la imagen (máx. 120 caracteres)",
+    "alt_text": "Descripción SEO de la imagen (máx. 120 caracteres, específica)",
     "categoria": "Categoría principal (elige entre: {', '.join(existing_categories) if existing_categories else 'Actualidad, Internacional, Política'})"
 }}
 REGLAS:
 - keyword_principal: específica y relevante
-- meta_descripcion: máximo 140 caracteres
-- contenido_html: mínimo 500 palabras, sin comillas dobles, sin &quot;, repite keyword
+- titulo: keyword al inicio
+- meta_descripcion: <= 156 caracteres, sin "prompt"
+- contenido_html: mínimo 500 palabras, sin comillas dobles, sin &quot;, repite keyword 4-6 veces, NO enlaces a otros medios
 - categoría: NO inventes, usa solo las permitidas
 - tags: incluye keyword_principal como primer tag
 """
@@ -276,9 +283,10 @@ def webhook():
 def health():
     return jsonify({
         'status': 'running',
-        'version': '6.5.0',
+        'version': '6.5.1',
         'wp_connected': wp_client is not None,
-        'categories': existing_categories
+        'categories': existing_categories,
+        'tags': existing_tags
     })
 
 if __name__ == '__main__':
